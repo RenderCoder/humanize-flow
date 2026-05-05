@@ -2,6 +2,13 @@
 
 All notable changes to humanize-flow will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Quote skill `description` frontmatter values so Codex can parse installed `SKILL.md` files.
+- Validate skill frontmatter during project checks to catch invalid installed skill metadata before release.
+
 ## [0.2.0] - 2026-05-05
 
 ### Added

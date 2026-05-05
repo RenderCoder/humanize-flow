@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-planner
-description: Use for Humanize Flow planning with Codex: discuss unclear software requirements, create complete Markdown plans, prepare Beads bd tasks, and write a draft handoff JSON. Do not implement code or invoke Claude; stop for human approval before execution.
+description: "Use for Humanize Flow planning with Codex: discuss unclear software requirements, create complete Markdown plans, prepare Beads bd tasks, and write a draft handoff JSON. Do not implement code or invoke Claude; stop for human approval before execution."
 ---
 
 # humanize-flow-planner

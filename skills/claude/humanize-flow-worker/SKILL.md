@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-worker
-description: Use in Claude Code to implement exactly one approved Humanize Flow Beads task. Read the handoff, plan, acceptance criteria, and bd task; optionally use humanize/RLCR; run tests; update bd notes; request Codex review.
+description: "Use in Claude Code to implement exactly one approved Humanize Flow Beads task. Read the handoff, plan, acceptance criteria, and bd task; optionally use humanize/RLCR; run tests; update bd notes; request Codex review."
 ---
 
 # humanize-flow-worker

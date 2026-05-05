@@ -40,6 +40,53 @@ for pattern in ['schemas/*.json', 'templates/*.json', 'examples/*.json']:
 print('[validate] OK: JSON files parse')
 PY
 
+python3 - <<'PY'
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+required_keys = {'name', 'description'}
+for path in sorted(Path('skills').glob('**/SKILL.md')):
+    text = path.read_text(encoding='utf-8')
+    if not text.startswith('---\n'):
+        raise SystemExit(f'[validate] FAIL: {path} missing YAML frontmatter')
+    try:
+        _, frontmatter, _ = text.split('---\n', 2)
+    except ValueError:
+        raise SystemExit(f'[validate] FAIL: {path} has unterminated YAML frontmatter')
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(frontmatter)
+        except Exception as exc:
+            raise SystemExit(f'[validate] FAIL: {path} invalid YAML frontmatter: {exc}')
+        if not isinstance(data, dict) or not required_keys.issubset(data):
+            raise SystemExit(f'[validate] FAIL: {path} frontmatter must include name and description')
+    else:
+        data = {}
+        for line in frontmatter.splitlines():
+            if not line.strip():
+                continue
+            if ':' not in line:
+                raise SystemExit(f'[validate] FAIL: {path} frontmatter line is not key/value YAML: {line}')
+            key, value = line.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+            if not key or not value:
+                raise SystemExit(f'[validate] FAIL: {path} frontmatter has empty key or value: {line}')
+            if value[0] in {'"', "'"}:
+                if len(value) < 2 or value[-1] != value[0]:
+                    raise SystemExit(f'[validate] FAIL: {path} frontmatter has unterminated quoted value: {line}')
+            elif ': ' in value:
+                raise SystemExit(f'[validate] FAIL: {path} frontmatter plain scalar must quote colon-space values: {line}')
+            data[key] = value
+        if not required_keys.issubset(data):
+            raise SystemExit(f'[validate] FAIL: {path} frontmatter must include name and description')
+print('[validate] OK: skill frontmatter parses')
+PY
+
 for f in docs/en/*.md; do
   base="$(basename "$f")"
   [ -f "docs/zh-CN/$base" ] || fail "missing Chinese doc for docs/en/$base"

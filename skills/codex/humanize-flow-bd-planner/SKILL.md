@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-bd-planner
-description: Use when the user already has a Beads bd task ID and wants Codex to understand that existing task, discuss missing details, create Humanize Flow Markdown artifacts, and write a draft handoff JSON without duplicating the task or implementing code.
+description: "Use when the user already has a Beads bd task ID and wants Codex to understand that existing task, discuss missing details, create Humanize Flow Markdown artifacts, and write a draft handoff JSON without duplicating the task or implementing code."
 ---
 
 # humanize-flow-bd-planner

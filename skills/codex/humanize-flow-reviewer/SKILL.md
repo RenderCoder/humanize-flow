@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-reviewer
-description: Use for Humanize Flow Codex reviews after Claude Code implementation. Review one Beads task against the approved handoff, Markdown plan, acceptance criteria, tests, and git diff. Do not implement fixes; return pass, changes_requested, or blocked.
+description: "Use for Humanize Flow Codex reviews after Claude Code implementation. Review one Beads task against the approved handoff, Markdown plan, acceptance criteria, tests, and git diff. Do not implement fixes; return pass, changes_requested, or blocked."
 ---
 
 # humanize-flow-reviewer
