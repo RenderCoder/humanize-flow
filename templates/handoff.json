@@ -1,0 +1,66 @@
+{
+  "schema_version": "1",
+  "project": "<repo-name>",
+  "slug": "<slug>",
+  "state": "draft",
+  "created_at": "<ISO-8601>",
+  "updated_at": "<ISO-8601>",
+  "created_by": "humanize-flow-planner",
+  "summary": "<one paragraph summary>",
+  "assumptions": [],
+  "open_questions": [],
+  "artifacts": {
+    "request": "docs/humanize-flow/<slug>/request.md",
+    "plan": "docs/humanize-flow/<slug>/plan.md",
+    "acceptance": "docs/humanize-flow/<slug>/acceptance.md",
+    "bd_plan": "docs/humanize-flow/<slug>/bd-plan.md"
+  },
+  "approval": {
+    "required": true,
+    "status": "pending",
+    "approved_by": "",
+    "approved_at": "",
+    "notes": ""
+  },
+  "bd": {
+    "materialized": false,
+    "epic": {
+      "key": "epic",
+      "title": "<epic title>",
+      "description": "<epic description>",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "humanize-flow",
+        "<slug>"
+      ]
+    },
+    "tasks": [
+      {
+        "key": "task-1",
+        "title": "<task title>",
+        "description": "<task description>",
+        "type": "task",
+        "priority": 2,
+        "labels": [
+          "humanize-flow",
+          "<slug>"
+        ],
+        "acceptance_criteria": [
+          "<criterion>"
+        ],
+        "depends_on_keys": []
+      }
+    ]
+  },
+  "execution": {
+    "current_bd_id": "",
+    "branch": "",
+    "test_command": "",
+    "humanize_preferred": true
+  },
+  "review": {
+    "verdict": "not_reviewed",
+    "latest_review_path": ""
+  }
+}

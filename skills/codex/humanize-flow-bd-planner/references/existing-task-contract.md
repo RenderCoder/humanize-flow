@@ -1,0 +1,66 @@
+# Existing Beads Task Contract
+
+This skill converts a pre-existing Beads task into a Humanize Flow handoff.
+
+## Source preservation
+
+The original Beads task is the source of truth for the request. Preserve:
+
+- task ID
+- title
+- description
+- labels
+- priority
+- type
+- parent/child/dependency information if present in JSON
+- status and owner information if present
+
+Do not overwrite or reinterpret those fields without saying so in the plan.
+
+## Handoff semantics
+
+For a direct execution task, the handoff should use:
+
+```json
+{
+  "source": {
+    "type": "beads",
+    "bd_id": "<bd-id>",
+    "source_file": "docs/humanize-flow/<slug>/bd-source.json"
+  },
+  "bd": {
+    "materialized": true,
+    "epic": {
+      "key": "source",
+      "title": "Existing Beads task <bd-id>",
+      "type": "epic"
+    },
+    "tasks": [
+      {
+        "key": "source-task",
+        "title": "<task title>",
+        "bd_id": "<bd-id>",
+        "acceptance_criteria": []
+      }
+    ]
+  },
+  "execution": {
+    "current_bd_id": "<bd-id>"
+  }
+}
+```
+
+`bd.materialized=true` means there is already a Beads task to run. It does **not** mean the implementation is complete.
+
+## No duplicate creation
+
+Do not prepare the source task again as a new Beads issue. The normal `humanize-flow approve <slug> --materialize-bd` path is for new requirements. For this imported-task path, the next step is usually:
+
+```bash
+humanize-flow approve <slug>
+humanize-flow run <bd-id>
+```
+
+## Splitting broad tasks
+
+If the source task is too broad, ask the human whether to split it. Until they approve a split, produce a draft plan and keep the original task as the only linked execution target.

@@ -1,0 +1,81 @@
+{
+  "schema_version": "1",
+  "project": "demo-editor",
+  "slug": "bd-1234-undo-redo",
+  "state": "draft",
+  "created_at": "2026-05-05T00:00:00Z",
+  "updated_at": "2026-05-05T00:00:00Z",
+  "created_by": "humanize-flow-bd-planner",
+  "summary": "Plan implementation for existing Beads task bd-1234: add undo and redo support to the editor.",
+  "source": {
+    "type": "beads",
+    "bd_id": "bd-1234",
+    "source_file": "docs/humanize-flow/bd-1234-undo-redo/bd-source.json",
+    "captured_at": "2026-05-05T00:00:00Z",
+    "title": "Add undo/redo support to the editor"
+  },
+  "assumptions": [
+    "The existing task is intended to be implemented as one worker task."
+  ],
+  "open_questions": [],
+  "artifacts": {
+    "request": "docs/humanize-flow/bd-1234-undo-redo/request.md",
+    "plan": "docs/humanize-flow/bd-1234-undo-redo/plan.md",
+    "acceptance": "docs/humanize-flow/bd-1234-undo-redo/acceptance.md",
+    "bd_plan": "docs/humanize-flow/bd-1234-undo-redo/bd-plan.md",
+    "bd_source": "docs/humanize-flow/bd-1234-undo-redo/bd-source.json"
+  },
+  "approval": {
+    "required": true,
+    "status": "pending",
+    "approved_by": "",
+    "approved_at": "",
+    "notes": ""
+  },
+  "bd": {
+    "materialized": true,
+    "epic": {
+      "key": "source",
+      "title": "Existing Beads task bd-1234",
+      "description": "Planning handoff for an existing Beads task. No duplicate task should be created.",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "humanize-flow",
+        "bd-1234-undo-redo",
+        "imported-bd-task"
+      ]
+    },
+    "tasks": [
+      {
+        "key": "source-task",
+        "title": "Add undo/redo support to the editor",
+        "description": "Implement the existing Beads task according to the approved Humanize Flow plan.",
+        "type": "task",
+        "priority": 2,
+        "labels": [
+          "humanize-flow",
+          "bd-1234-undo-redo",
+          "imported-bd-task"
+        ],
+        "acceptance_criteria": [
+          "Undo works for normal typing.",
+          "Redo works after undo.",
+          "Relevant tests pass."
+        ],
+        "depends_on_keys": [],
+        "bd_id": "bd-1234"
+      }
+    ]
+  },
+  "execution": {
+    "current_bd_id": "bd-1234",
+    "branch": "",
+    "test_command": "npm test",
+    "humanize_preferred": true
+  },
+  "review": {
+    "verdict": "not_reviewed",
+    "latest_review_path": ""
+  }
+}

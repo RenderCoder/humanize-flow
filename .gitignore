@@ -1,0 +1,14 @@
+# Local runtime state
+.humanize-flow/runs/
+.humanize-flow/tmp/
+
+# Generated packages
+humanize-flow.zip
+*.tmp
+
+# Secrets and local environments
+.env
+.env.*
+!.env.example
+.DS_Store
+.omx/

@@ -1,0 +1,77 @@
+{
+  "schema_version": "1",
+  "project": "<repo-name>",
+  "slug": "<slug>",
+  "state": "draft",
+  "created_at": "<ISO-8601>",
+  "updated_at": "<ISO-8601>",
+  "created_by": "humanize-flow-bd-planner",
+  "summary": "<one paragraph summary derived from the existing Beads task>",
+  "source": {
+    "type": "beads",
+    "bd_id": "<bd-id>",
+    "source_file": "docs/humanize-flow/<slug>/bd-source.json",
+    "captured_at": "<ISO-8601>",
+    "title": "<source task title>"
+  },
+  "assumptions": [],
+  "open_questions": [],
+  "artifacts": {
+    "request": "docs/humanize-flow/<slug>/request.md",
+    "plan": "docs/humanize-flow/<slug>/plan.md",
+    "acceptance": "docs/humanize-flow/<slug>/acceptance.md",
+    "bd_plan": "docs/humanize-flow/<slug>/bd-plan.md",
+    "bd_source": "docs/humanize-flow/<slug>/bd-source.json"
+  },
+  "approval": {
+    "required": true,
+    "status": "pending",
+    "approved_by": "",
+    "approved_at": "",
+    "notes": ""
+  },
+  "bd": {
+    "materialized": true,
+    "epic": {
+      "key": "source",
+      "title": "Existing Beads task <bd-id>",
+      "description": "Planning handoff for an existing Beads task. No duplicate task should be created.",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "humanize-flow",
+        "<slug>",
+        "imported-bd-task"
+      ]
+    },
+    "tasks": [
+      {
+        "key": "source-task",
+        "title": "<source task title>",
+        "description": "<execution scope derived from the existing Beads task>",
+        "type": "task",
+        "priority": 2,
+        "labels": [
+          "humanize-flow",
+          "<slug>",
+          "imported-bd-task"
+        ],
+        "acceptance_criteria": [
+          "<criterion>"
+        ],
+        "depends_on_keys": [],
+        "bd_id": "<bd-id>"
+      }
+    ]
+  },
+  "execution": {
+    "current_bd_id": "<bd-id>",
+    "branch": "",
+    "test_command": "",
+    "humanize_preferred": true
+  },
+  "review": {
+    "verdict": "not_reviewed",
+    "latest_review_path": ""
+  }
+}

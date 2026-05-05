@@ -1,0 +1,330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/humanize-flow/handoff.schema.json",
+  "title": "Humanize Flow Handoff Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "slug",
+    "state",
+    "created_at",
+    "artifacts",
+    "approval",
+    "bd"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "approved",
+        "in_progress",
+        "review_requested",
+        "changes_requested",
+        "complete",
+        "blocked"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "beads",
+            "file"
+          ]
+        },
+        "bd_id": {
+          "type": "string"
+        },
+        "bd_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_file": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "request",
+        "plan",
+        "acceptance"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "request": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "acceptance": {
+          "type": "string"
+        },
+        "bd_plan": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "string"
+        },
+        "implementation_summary": {
+          "type": "string"
+        },
+        "latest_review": {
+          "type": "string"
+        },
+        "bd_source": {
+          "type": "string"
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "required",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected"
+          ]
+        },
+        "approved_by": {
+          "type": "string"
+        },
+        "approved_at": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "bd": {
+      "type": "object",
+      "required": [
+        "materialized",
+        "epic",
+        "tasks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "materialized": {
+          "type": "boolean"
+        },
+        "epic": {
+          "$ref": "#/$defs/bd_item"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bd_task"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "current_bd_id": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "test_command": {
+          "type": "string"
+        },
+        "humanize_preferred": {
+          "type": "boolean"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "changes_requested",
+            "blocked",
+            "not_reviewed"
+          ]
+        },
+        "latest_review_path": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bd_item": {
+      "type": "object",
+      "required": [
+        "key",
+        "title"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "epic",
+            "task",
+            "feature",
+            "bug"
+          ]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bd_id": {
+          "type": "string"
+        }
+      }
+    },
+    "bd_task": {
+      "type": "object",
+      "required": [
+        "key",
+        "title",
+        "description",
+        "acceptance_criteria"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "task",
+            "feature",
+            "bug"
+          ]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "depends_on_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bd_id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

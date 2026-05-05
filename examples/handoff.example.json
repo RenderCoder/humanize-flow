@@ -1,0 +1,106 @@
+{
+  "schema_version": "1",
+  "project": "demo-editor",
+  "slug": "undo-redo",
+  "state": "draft",
+  "created_at": "2026-05-04T00:00:00Z",
+  "updated_at": "2026-05-04T00:00:00Z",
+  "created_by": "humanize-flow-planner",
+  "summary": "Add undo and redo support to the demo editor with keyboard shortcuts and tests.",
+  "assumptions": [
+    "The editor state is centralized in the existing editor store."
+  ],
+  "open_questions": [],
+  "artifacts": {
+    "request": "docs/humanize-flow/undo-redo/request.md",
+    "plan": "docs/humanize-flow/undo-redo/plan.md",
+    "acceptance": "docs/humanize-flow/undo-redo/acceptance.md",
+    "bd_plan": "docs/humanize-flow/undo-redo/bd-plan.md"
+  },
+  "approval": {
+    "required": true,
+    "status": "pending",
+    "approved_by": "",
+    "approved_at": "",
+    "notes": ""
+  },
+  "bd": {
+    "materialized": false,
+    "epic": {
+      "key": "epic",
+      "title": "Add undo/redo to editor",
+      "description": "Implement undo and redo support according to the approved Humanize Flow plan.",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "humanize-flow",
+        "undo-redo"
+      ]
+    },
+    "tasks": [
+      {
+        "key": "model",
+        "title": "Design editor history model",
+        "description": "Add a history model that stores undo and redo stacks without changing unrelated editor behavior.",
+        "type": "task",
+        "priority": 1,
+        "labels": [
+          "humanize-flow",
+          "undo-redo",
+          "implementation"
+        ],
+        "acceptance_criteria": [
+          "History state supports undo and redo for normal text edits."
+        ],
+        "depends_on_keys": []
+      },
+      {
+        "key": "shortcuts",
+        "title": "Wire undo/redo keyboard shortcuts",
+        "description": "Connect Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z to the editor history model.",
+        "type": "task",
+        "priority": 2,
+        "labels": [
+          "humanize-flow",
+          "undo-redo",
+          "frontend"
+        ],
+        "acceptance_criteria": [
+          "Keyboard shortcuts invoke undo and redo in supported platforms."
+        ],
+        "depends_on_keys": [
+          "model"
+        ]
+      },
+      {
+        "key": "tests",
+        "title": "Add undo/redo tests",
+        "description": "Add targeted tests for undo and redo behavior.",
+        "type": "task",
+        "priority": 2,
+        "labels": [
+          "humanize-flow",
+          "undo-redo",
+          "tests"
+        ],
+        "acceptance_criteria": [
+          "New tests cover undo and redo behavior and existing tests pass."
+        ],
+        "depends_on_keys": [
+          "model",
+          "shortcuts"
+        ]
+      }
+    ]
+  },
+  "execution": {
+    "current_bd_id": "",
+    "branch": "",
+    "test_command": "npm test",
+    "humanize_preferred": true
+  },
+  "review": {
+    "verdict": "not_reviewed",
+    "latest_review_path": ""
+  }
+}

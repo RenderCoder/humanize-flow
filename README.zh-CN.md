@@ -1,0 +1,166 @@
+# humanize-flow
+
+**humanize-flow** 是一个轻量级多 agent 编程工作流编排工具包：
+
+```text
+Codex 规划 → 人工确认 → Claude Code 执行 → Codex 审查
+```
+
+它适合这样的使用方式：让 Codex 理解需求和制定计划，让 Claude Code 具体改代码，让 Beads (`bd`) 保存任务状态和依赖，让 humanize/RLCR 在复杂实现阶段提供迭代审查能力。
+
+## 为什么需要它
+
+复杂 AI 编程任务最容易失败的地方，是“规划、实现、审查”混在一起。humanize-flow 把边界固定下来：
+
+- **Codex 负责规划**：必要时和你讨论需求，生成 Markdown 计划，准备 Beads 任务，写 handoff JSON。
+- **人类负责确认**：没有明确批准前，不开始实现。
+- **Claude Code 负责执行**：一次只执行一个已批准的任务，复杂任务可使用 humanize/RLCR。
+- **Codex 负责审查**：对照计划、验收标准、测试和 git diff 进行 review。
+- **CLI 负责编排**：安装、初始化、批准、创建 bd 任务、调用 worker、调用 reviewer、查看状态。
+
+## 组件
+
+| 组件 | 名称 | 作用 |
+| --- | --- | --- |
+| Codex skill | `humanize-flow-planner` | 从新需求开始讨论、生成 Markdown、准备 Beads 任务、写 draft handoff JSON。 |
+| Codex skill | `humanize-flow-bd-planner` | 从已有 Beads 任务 ID 开始，和你确认缺失细节，生成 Markdown 和 handoff JSON，并链接原任务而不是重复创建任务。 |
+| Claude Code skill | `humanize-flow-worker` | 执行一个已批准的 Beads 任务，并请求 review。 |
+| Codex skill | `humanize-flow-reviewer` | 对照 handoff、计划、验收标准、测试和 git diff 进行审查。 |
+| CLI | `humanize-flow` | 安装、初始化、批准、创建 Beads 任务、执行 worker、执行 review、查看状态。 |
+
+## 安装
+
+解压 release 后运行：
+
+```bash
+./install.sh --user
+humanize-flow doctor
+```
+
+默认安装到：
+
+```text
+~/.agents/skills/humanize-flow-planner
+~/.agents/skills/humanize-flow-bd-planner
+~/.agents/skills/humanize-flow-reviewer
+~/.claude/skills/humanize-flow-worker
+~/.local/bin/humanize-flow
+~/.local/share/humanize-flow
+```
+
+如果想安装为当前仓库专用 skill：
+
+```bash
+./install.sh --project
+```
+
+## 快速开始
+
+在 git 仓库内：
+
+```bash
+humanize-flow init --with-bd
+```
+
+然后在 Codex 中交互式调用：
+
+```text
+$humanize-flow-planner
+
+我想给编辑器增加 undo/redo 支持。请在必要时和我讨论不明确的需求，然后展示完整计划并准备 Humanize Flow 产物。不要实现代码。
+```
+
+确认计划后：
+
+```bash
+humanize-flow approve undo-redo --materialize-bd
+humanize-flow run-next
+humanize-flow review <bd-id>
+```
+
+## 从已有 Beads 任务开始规划
+
+如果需求已经写在 Beads 里，不需要重新输入。可以在 Codex 中调用专用 skill：
+
+```text
+$humanize-flow-bd-planner
+
+请读取 Beads 任务 bd-1234，和我确认缺失细节，然后创建 Humanize Flow Markdown 产物和 handoff JSON。不要重复创建 Beads 任务，也不要实现代码。
+```
+
+也可以使用 CLI：
+
+```bash
+humanize-flow plan-from-bd bd-1234 --slug undo-redo
+```
+
+这个命令会把 `bd show bd-1234 --json` 保存到 `docs/humanize-flow/<slug>/bd-source.json`，在 `.humanize-flow/handoffs/<slug>.json` 中链接原始任务，通常下一步是：
+
+```bash
+humanize-flow approve <slug>
+humanize-flow run bd-1234
+humanize-flow review bd-1234
+```
+
+## 非交互规划
+
+```bash
+humanize-flow plan --slug undo-redo --from examples/minimal-feature-request.md
+humanize-flow plan-from-bd bd-1234 --slug undo-redo
+```
+
+如果关键需求仍不明确，planner 应该写入 `docs/humanize-flow/<slug>/questions.md` 并停止，而不是替你做高影响决策。
+
+## 产物模型
+
+humanize-flow 把三类接口分开：
+
+```text
+Markdown        docs/humanize-flow/<slug>/...       给人审阅
+Beads issues    bd ready / bd show / bd dep          给 agent 管任务状态
+Handoff JSON    .humanize-flow/handoffs/<slug>.json  给脚本做确定性编排
+```
+
+handoff manifest 由 `schemas/handoff.schema.json` 约束。
+
+## 依赖
+
+CLI 本身需要：
+
+- Bash
+- Git
+- Python 3
+- 推荐安装 `jq`
+
+推荐工作流工具：
+
+- Codex CLI
+- Claude Code CLI
+- Beads (`bd`)
+- humanize 插件或 skills，可选，但复杂实现很有用
+
+## 安全默认值
+
+- planner 不修改业务实现代码。
+- worker 拒绝执行未批准的 handoff。
+- reviewer 不负责修复，只负责审查。
+- CLI 默认不使用 full-access sandbox。
+- 高权限模式只应在可信、隔离环境中使用。
+
+## 文档
+
+- 英文文档：`docs/en/`
+- 简体中文文档：`docs/zh-CN/`
+
+## 开发
+
+```bash
+make test
+make package
+```
+
+生成的发布包是 `humanize-flow.zip`。
+
+## 许可证
+
+MIT

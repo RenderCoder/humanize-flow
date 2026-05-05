@@ -1,0 +1,110 @@
+# Beads Integration
+
+humanize-flow uses Beads as a task-memory and dependency layer.
+
+## Why Beads
+
+Markdown plans are easy for humans to read, but agents need a queue and dependency graph. Beads provides ready-task selection, issue details, dependencies, and JSON output.
+
+## Labels
+
+Humanize Flow tasks created by the new-request planner should include:
+
+- `humanize-flow`
+- the slug, for example `undo-redo`
+
+Optional labels:
+
+- `planner-created`
+- `imported-bd-task`
+- `humanize-preferred`
+- area labels such as `frontend`, `backend`, `tests`, or `docs`
+
+Existing tasks imported with `humanize-flow-bd-planner` do not need to be relabeled before execution, because the handoff records their `bd_id`. Adding `humanize-flow` and the slug labels is still helpful for queue visibility if your project policy allows it.
+
+## New-request materialization
+
+The standard planner prepares Beads tasks inside the handoff manifest. After approval, run:
+
+```bash
+humanize-flow approve <slug> --materialize-bd
+```
+
+or:
+
+```bash
+humanize-flow materialize-bd <slug>
+```
+
+## Existing-task planning
+
+When a requirement is already stored in Beads, use:
+
+```bash
+humanize-flow plan-from-bd <bd-id> --slug <slug>
+```
+
+or invoke:
+
+```text
+$humanize-flow-bd-planner
+```
+
+This path captures:
+
+```bash
+bd show <bd-id> --json
+```
+
+as:
+
+```text
+docs/humanize-flow/<slug>/bd-source.json
+```
+
+The handoff should include:
+
+```json
+{
+  "source": {
+    "type": "beads",
+    "bd_id": "<bd-id>"
+  },
+  "bd": {
+    "materialized": true
+  },
+  "execution": {
+    "current_bd_id": "<bd-id>"
+  }
+}
+```
+
+This means the Beads task already exists and should not be created again. Approve with:
+
+```bash
+humanize-flow approve <slug>
+```
+
+Then run:
+
+```bash
+humanize-flow run <bd-id>
+```
+
+## Worker usage
+
+The worker should read the task:
+
+```bash
+bd show <bd-id> --json
+```
+
+It should not silently expand scope. Discovered work should become a new Beads issue or a reviewer finding, depending on project policy.
+
+## `run-next` behavior
+
+`humanize-flow run-next` prefers ready Beads tasks that appear in approved handoffs. This lets imported tasks work even if they do not have a `humanize-flow` label. If no approved handoff task is ready, it falls back to tasks labeled `humanize-flow`, then to the first ready task.
+
+## Review usage
+
+The reviewer should use Beads data as one source of truth, but it must also inspect the approved handoff and git diff.

@@ -1,0 +1,848 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+HF_VERSION="0.2.0"
+HF_NAME="humanize-flow"
+
+log() { printf '%s\n' "$*"; }
+info() { printf '[humanize-flow] %s\n' "$*"; }
+warn() { printf '[humanize-flow] WARN: %s\n' "$*" >&2; }
+die() { printf '[humanize-flow] ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+humanize-flow - orchestrate Codex planning/review, Claude Code work, Beads tasks, and optional humanize loops.
+
+Usage:
+  humanize-flow <command> [options]
+
+Commands:
+  help                         Show this help.
+  version                      Show version.
+  paths                        Show resolved installation paths.
+  doctor                       Check local tools and skill installation.
+  init [--with-bd]             Initialize .humanize-flow and docs/humanize-flow in the current git repo.
+  plan --slug S --from FILE    Run Codex planner for a request file.
+  plan --slug S --request TXT  Run Codex planner for inline request text.
+  plan-from-bd BD_ID [--slug S]
+                               Run Codex planner from an existing Beads task ID.
+  from-bd BD_ID [--slug S]     Alias for plan-from-bd.
+  approve SLUG [--materialize-bd]
+                               Mark a handoff as approved; optionally create Beads tasks from it.
+  materialize-bd SLUG          Create Beads epic/tasks from an approved handoff manifest.
+  run BD_ID                    Run Claude Code worker for one Beads task.
+  run-next                     Pick the next approved/imported or humanize-flow Beads task from 'bd ready --json' and run it.
+  review BD_ID                 Run Codex reviewer for one Beads task.
+  status                       Show handoff and Beads queue status.
+
+Environment:
+  HUMANIZE_FLOW_HOME           Distribution root. Default: ~/.local/share/humanize-flow when installed.
+  HUMANIZE_FLOW_CLAUDE_ARGS    Extra Claude CLI args. Default: empty.
+  HUMANIZE_FLOW_CODEX_ARGS     Extra Codex exec args. Default: empty.
+  HUMANIZE_FLOW_NONINTERACTIVE Set to 1 to avoid interactive prompts in scripts.
+
+Examples:
+  humanize-flow doctor
+  humanize-flow init --with-bd
+  humanize-flow plan --slug undo-redo --from docs/request.md
+  humanize-flow plan-from-bd bd-1234 --slug undo-redo
+  humanize-flow approve undo-redo --materialize-bd
+  humanize-flow run-next
+  humanize-flow review bd-a1b2
+EOF
+}
+
+script_dir() { CDPATH= cd -- "$(dirname -- "$0")" && pwd; }
+
+resolve_dist_root() {
+  local sd parent
+  sd="$(script_dir)"
+  parent="$(CDPATH= cd -- "$sd/.." && pwd)"
+  if [ -d "$parent/skills" ] && [ -d "$parent/schemas" ]; then
+    printf '%s\n' "$parent"
+    return 0
+  fi
+  if [ -n "${HUMANIZE_FLOW_HOME:-}" ]; then
+    printf '%s\n' "$HUMANIZE_FLOW_HOME"
+    return 0
+  fi
+  printf '%s\n' "$HOME/.local/share/humanize-flow"
+}
+
+DIST_ROOT="$(resolve_dist_root)"
+
+repo_root() { git rev-parse --show-toplevel 2>/dev/null || pwd; }
+require_git_repo() { git rev-parse --show-toplevel >/dev/null 2>&1 || die "Run this command inside a git repository."; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+timestamp() { date -u +%Y%m%d-%H%M%S; }
+iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+state_dir() { printf '%s/.humanize-flow\n' "$(repo_root)"; }
+docs_dir() { printf '%s/docs/humanize-flow\n' "$(repo_root)"; }
+handoff_path() { printf '%s/handoffs/%s.json\n' "$(state_dir)" "$1"; }
+
+slugify() {
+  python3 - "$@" <<'PY'
+import re, sys
+text = " ".join(sys.argv[1:]).strip().lower()
+text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+print((text[:80].strip("-") or "request"))
+PY
+}
+
+planner_skill_hint() { printf '%s\n' '$humanize-flow-planner'; }
+bd_planner_skill_hint() { printf '%s\n' '$humanize-flow-bd-planner'; }
+reviewer_skill_hint() { printf '%s\n' '$humanize-flow-reviewer'; }
+
+worker_skill_file() {
+  local p
+  p="$DIST_ROOT/skills/claude/humanize-flow-worker/SKILL.md"
+  if [ -f "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  p="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/humanize-flow-worker/SKILL.md"
+  if [ -f "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  p="$(repo_root)/.claude/skills/humanize-flow-worker/SKILL.md"
+  if [ -f "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  return 1
+}
+
+cmd_paths() {
+  cat <<EOF
+version: $HF_VERSION
+dist_root: $DIST_ROOT
+repo_root: $(repo_root)
+state_dir: $(state_dir)
+docs_dir: $(docs_dir)
+codex_user_skills_dir: $HOME/.agents/skills
+claude_user_skills_dir: ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills
+EOF
+}
+
+cmd_doctor() {
+  local failures=0
+  info "version: $HF_VERSION"
+  info "dist root: $DIST_ROOT"
+
+  for bin in git python3 codex claude bd jq; do
+    if command_exists "$bin"; then
+      printf '  OK   %-10s %s\n' "$bin" "$(command -v "$bin")"
+    else
+      case "$bin" in
+        git|python3)
+          printf '  FAIL %-10s missing\n' "$bin"
+          failures=$((failures + 1))
+          ;;
+        *)
+          printf '  WARN %-10s missing\n' "$bin"
+          ;;
+      esac
+    fi
+  done
+
+  if [ -d "$HOME/.agents/skills/humanize-flow-planner" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-planner" ]; then
+    printf '  OK   codex skill humanize-flow-planner installed\n'
+  else
+    printf '  WARN codex skill humanize-flow-planner not found\n'
+  fi
+
+  if [ -d "$HOME/.agents/skills/humanize-flow-bd-planner" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-bd-planner" ]; then
+    printf '  OK   codex skill humanize-flow-bd-planner installed\n'
+  else
+    printf '  WARN codex skill humanize-flow-bd-planner not found\n'
+  fi
+
+  if [ -d "$HOME/.agents/skills/humanize-flow-reviewer" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-reviewer" ]; then
+    printf '  OK   codex skill humanize-flow-reviewer installed\n'
+  else
+    printf '  WARN codex skill humanize-flow-reviewer not found\n'
+  fi
+
+  if [ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/humanize-flow-worker" ] || [ -d "$(repo_root)/.claude/skills/humanize-flow-worker" ]; then
+    printf '  OK   claude skill humanize-flow-worker installed\n'
+  else
+    printf '  WARN claude skill humanize-flow-worker not found\n'
+  fi
+
+  if command_exists humanize; then
+    printf '  OK   humanize optional command found: %s\n' "$(command -v humanize)"
+  elif [ -d "$HOME/.claude/plugins" ] && find "$HOME/.claude/plugins" -type d -name humanize 2>/dev/null | head -n 1 | grep -q .; then
+    printf '  OK   humanize optional plugin directory appears to exist\n'
+  else
+    printf '  WARN humanize optional integration not detected\n'
+  fi
+
+  if [ "$failures" -gt 0 ]; then
+    die "$failures required tool(s) missing."
+  fi
+}
+
+cmd_init() {
+  require_git_repo
+  local with_bd=0 stealth=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --with-bd) with_bd=1 ;;
+      --bd-stealth) with_bd=1; stealth=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage: humanize-flow init [--with-bd] [--bd-stealth]
+
+Creates .humanize-flow/ and docs/humanize-flow/ in the current git repository.
+Use --with-bd to run 'bd init' when Beads is installed and not initialized.
+Use --bd-stealth to run 'bd init --stealth' when supported.
+EOF
+        return 0 ;;
+      *) die "Unknown init option: $1" ;;
+    esac
+    shift
+  done
+
+  mkdir -p "$(state_dir)/handoffs" "$(state_dir)/runs" "$(state_dir)/tmp" "$(docs_dir)"
+  if [ ! -f "$(state_dir)/config.json" ]; then
+    cat > "$(state_dir)/config.json" <<EOF
+{
+  "schema_version": "1",
+  "created_at": "$(iso_now)",
+  "default_docs_dir": "docs/humanize-flow",
+  "default_state_dir": ".humanize-flow",
+  "humanize_preferred": true
+}
+EOF
+  fi
+  if [ ! -f "$(state_dir)/README.md" ]; then
+    cat > "$(state_dir)/README.md" <<'EOF'
+# .humanize-flow
+
+This directory stores Humanize Flow handoff manifests and run logs.
+
+- `handoffs/` is intended to be committed when it describes approved work.
+- `runs/` and `tmp/` are local runtime folders and may be ignored.
+EOF
+  fi
+
+  if [ "$with_bd" -eq 1 ]; then
+    if command_exists bd; then
+      if bd info >/dev/null 2>&1; then
+        info "Beads already initialized."
+      else
+        if [ "$stealth" -eq 1 ]; then
+          info "running bd init --stealth"
+          bd init --stealth
+        else
+          info "running bd init"
+          bd init
+        fi
+      fi
+    else
+      warn "bd not installed; skipped bd init."
+    fi
+  fi
+
+  info "initialized $(repo_root)"
+}
+
+write_request_file() {
+  local slug request from target
+  slug="$1"; request="$2"; from="$3"
+  mkdir -p "$(docs_dir)/$slug"
+  target="$(docs_dir)/$slug/request.md"
+  if [ -n "$from" ]; then
+    cp "$from" "$target"
+  else
+    cat > "$target" <<EOF
+# Request: $slug
+
+$request
+EOF
+  fi
+  printf '%s\n' "$target"
+}
+
+cmd_plan() {
+  require_git_repo
+  local slug request from no_codex sandbox run_dir request_path prompt_file final_file prompt_text
+  slug=""; request=""; from=""; no_codex=0; sandbox="workspace-write"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) shift; slug="${1:-}" ;;
+      --request) shift; request="${1:-}" ;;
+      --from) shift; from="${1:-}" ;;
+      --no-codex) no_codex=1 ;;
+      --sandbox) shift; sandbox="${1:-}" ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow plan --slug SLUG --from FILE
+  humanize-flow plan --slug SLUG --request "text"
+
+Runs Codex with the humanize-flow-planner skill. The planner should discuss
+ambiguity when possible, then write Markdown artifacts and a draft handoff.
+EOF
+        return 0 ;;
+      *) die "Unknown plan option: $1" ;;
+    esac
+    shift
+  done
+
+  if [ -z "$from" ] && [ -z "$request" ]; then die "plan requires --from FILE or --request TEXT."; fi
+  if [ -n "$from" ] && [ ! -f "$from" ]; then die "request file not found: $from"; fi
+  if [ -z "$slug" ]; then
+    if [ -n "$request" ]; then slug="$(slugify "$request")"; else slug="$(slugify "$(basename "$from")")"; fi
+  fi
+
+  cmd_init >/dev/null
+  request_path="$(write_request_file "$slug" "$request" "$from")"
+  run_dir="$(state_dir)/runs/$(timestamp)-plan-$slug"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/planner-prompt.md"
+  final_file="$run_dir/codex-final.md"
+
+  cat > "$prompt_file" <<EOF
+$(planner_skill_hint)
+
+You are running the Humanize Flow planner for this repository.
+
+Slug: $slug
+Request file: $request_path
+Required state dir: $(state_dir)
+Required docs dir: $(docs_dir)
+Required handoff path: $(handoff_path "$slug")
+
+Follow the humanize-flow-planner skill exactly:
+- First understand the request and repository context.
+- If important ambiguity remains and this is an interactive session, discuss it with the user before finalizing.
+- If this is non-interactive and key ambiguity remains, write docs/humanize-flow/$slug/questions.md and stop with a concise summary.
+- Do not modify implementation code.
+- Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Keep the handoff in state=draft and approval.status=pending unless the user explicitly approves in-session.
+- Prepare Beads tasks in the handoff. Materialize them only after explicit human approval.
+EOF
+
+  info "planner prompt: $prompt_file"
+  if [ "$no_codex" -eq 1 ]; then info "--no-codex set; prompt written but not executed."; return 0; fi
+  command_exists codex || die "codex CLI not found."
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  codex exec --sandbox "$sandbox" ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$final_file"
+}
+
+extract_bd_slug_seed() {
+  python3 - "$1" "$2" <<'PY'
+import json, re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+fallback = sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    print('bd-' + re.sub(r'[^a-z0-9]+', '-', fallback.lower()).strip('-'))
+    raise SystemExit(0)
+
+candidates = []
+
+def walk(obj):
+    if isinstance(obj, dict):
+        for key in ('title', 'summary', 'name', 'text'):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+        for value in obj.values():
+            walk(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            walk(value)
+
+walk(data)
+seed = candidates[0] if candidates else fallback
+seed = f"{fallback}-{seed}"
+seed = seed.lower()
+seed = re.sub(r'[^a-z0-9]+', '-', seed).strip('-')
+print((seed[:80].strip('-') or 'bd-task'))
+PY
+}
+
+cmd_plan_from_bd() {
+  require_git_repo
+  local bd_id slug no_codex sandbox run_dir prompt_file final_file prompt_text source_file tmp_source safe_bd_id
+  bd_id=""; slug=""; no_codex=0; sandbox="workspace-write"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) shift; slug="${1:-}" ;;
+      --no-codex) no_codex=1 ;;
+      --sandbox) shift; sandbox="${1:-}" ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow plan-from-bd BD_ID [--slug SLUG]
+  humanize-flow from-bd BD_ID [--slug SLUG]
+
+Reads an existing Beads task with 'bd show BD_ID --json', captures it as
+bd-source.json, and runs the humanize-flow-bd-planner Codex skill. This path
+links the existing task instead of creating duplicate Beads tasks.
+
+Options:
+  --sandbox <mode>  Pass sandbox mode to codex exec; default is workspace-write.
+  --no-codex        Capture the task and write the planner prompt, but do not execute Codex.
+EOF
+        return 0 ;;
+      --*) die "Unknown plan-from-bd option: $1" ;;
+      *)
+        if [ -z "$bd_id" ]; then bd_id="$1"; else die "Unexpected extra argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+
+  [ -n "$bd_id" ] || die "plan-from-bd requires a Beads task ID."
+  command_exists bd || die "bd CLI not found; cannot read existing task $bd_id."
+  cmd_init >/dev/null
+  mkdir -p "$(state_dir)/tmp"
+  safe_bd_id="$(slugify "$bd_id")"
+  tmp_source="$(state_dir)/tmp/bd-source-$(timestamp)-$safe_bd_id.json"
+  bd show "$bd_id" --json > "$tmp_source"
+
+  if [ -z "$slug" ]; then
+    slug="$(extract_bd_slug_seed "$tmp_source" "$bd_id")"
+  fi
+
+  mkdir -p "$(docs_dir)/$slug"
+  source_file="$(docs_dir)/$slug/bd-source.json"
+  cp "$tmp_source" "$source_file"
+
+  run_dir="$(state_dir)/runs/$(timestamp)-plan-from-bd-$slug"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/bd-planner-prompt.md"
+  final_file="$run_dir/codex-final.md"
+
+  cat > "$prompt_file" <<EOF
+$(bd_planner_skill_hint)
+
+You are running the Humanize Flow existing-Beads-task planner for this repository.
+
+Source Beads task id: $bd_id
+Captured Beads source JSON: $source_file
+Slug: $slug
+Required state dir: $(state_dir)
+Required docs dir: $(docs_dir)
+Required handoff path: $(handoff_path "$slug")
+
+Follow the humanize-flow-bd-planner skill exactly:
+- Read and understand the existing Beads task. Do not ask the user to repeat information already in bd.
+- If important ambiguity remains and this is an interactive session, discuss it with the user before finalizing.
+- If this is non-interactive and key ambiguity remains, write docs/humanize-flow/$slug/questions.md and stop with a concise summary.
+- Do not modify implementation code.
+- Do not invoke Claude Code.
+- Do not create duplicate Beads tasks.
+- Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Preserve $source_file as bd-source.json and reference it from the handoff artifacts map.
+- In the handoff, set source.type=beads, source.bd_id=$bd_id, bd.materialized=true, and execution.current_bd_id=$bd_id.
+- Keep the handoff in state=draft and approval.status=pending unless the user explicitly approves in-session.
+- The normal next commands are: humanize-flow approve $slug ; humanize-flow run $bd_id ; humanize-flow review $bd_id
+EOF
+
+  info "bd planner prompt: $prompt_file"
+  info "captured bd source: $source_file"
+  if [ "$no_codex" -eq 1 ]; then info "--no-codex set; prompt written but not executed."; return 0; fi
+  command_exists codex || die "codex CLI not found."
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  codex exec --sandbox "$sandbox" ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$final_file"
+}
+
+cmd_approve() {
+  require_git_repo
+  local slug materialize file
+  slug="${1:-}"; materialize=0
+  [ -n "$slug" ] || die "Usage: humanize-flow approve SLUG [--materialize-bd]"
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --materialize-bd) materialize=1 ;;
+      --help|-h) log "Usage: humanize-flow approve SLUG [--materialize-bd]"; return 0 ;;
+      *) die "Unknown approve option: $1" ;;
+    esac
+    shift
+  done
+  file="$(handoff_path "$slug")"
+  [ -f "$file" ] || die "handoff not found: $file"
+  python3 - "$file" <<'PY'
+import json, sys, datetime, getpass
+path = sys.argv[1]
+with open(path, encoding='utf-8') as f:
+    data = json.load(f)
+data['state'] = 'approved'
+data['updated_at'] = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+approval = data.setdefault('approval', {})
+approval['required'] = True
+approval['status'] = 'approved'
+approval['approved_at'] = data['updated_at']
+approval['approved_by'] = approval.get('approved_by') or getpass.getuser()
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+print(path)
+PY
+  info "approved $slug"
+  if [ "$materialize" -eq 1 ]; then cmd_materialize_bd "$slug"; fi
+}
+
+cmd_materialize_bd() {
+  require_git_repo
+  local slug file
+  slug="${1:-}"; [ -n "$slug" ] || die "Usage: humanize-flow materialize-bd SLUG"
+  file="$(handoff_path "$slug")"
+  [ -f "$file" ] || die "handoff not found: $file"
+  command_exists bd || die "bd CLI not found. Install Beads or run without --materialize-bd."
+  python3 - "$file" <<'PY'
+import json, subprocess, sys, datetime, shlex
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding='utf-8'))
+if data.get('approval', {}).get('status') != 'approved':
+    raise SystemExit('handoff must be approved before materializing bd tasks')
+bd = data.setdefault('bd', {})
+if bd.get('materialized'):
+    print('Beads tasks already materialized; nothing to do.')
+    raise SystemExit(0)
+
+def run(args):
+    print('+ ' + ' '.join(shlex.quote(a) for a in args), file=sys.stderr)
+    cp = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if cp.returncode != 0:
+        sys.stderr.write(cp.stderr)
+        raise SystemExit(cp.returncode)
+    return cp.stdout.strip()
+
+def find_id(obj):
+    if isinstance(obj, dict):
+        for key in ('id', 'issue_id', 'bead_id'):
+            value = obj.get(key)
+            if isinstance(value, str) and value:
+                return value
+        for value in obj.values():
+            found = find_id(value)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = find_id(value)
+            if found:
+                return found
+    return None
+
+def create_item(item, parent_id=None):
+    title = item.get('title') or item.get('key') or 'Humanize Flow task'
+    typ = item.get('type') or 'task'
+    priority = str(item.get('priority', 2))
+    desc = item.get('description') or ''
+    labels = list(item.get('labels') or [])
+    if 'humanize-flow' not in labels:
+        labels.insert(0, 'humanize-flow')
+    if data.get('slug') and data.get('slug') not in labels:
+        labels.append(data['slug'])
+    args = ['bd', 'create', title, '-t', typ, '-p', priority, '--description', desc, '-l', ','.join(labels), '--json']
+    if parent_id and typ != 'epic':
+        args.extend(['--parent', parent_id])
+    out = run(args)
+    try:
+        parsed = json.loads(out)
+    except Exception:
+        parsed = {'raw': out}
+    bid = find_id(parsed)
+    if not bid:
+        raise SystemExit(f'could not parse bd id from output: {out}')
+    item['bd_id'] = bid
+    return bid
+
+epic = bd.setdefault('epic', {'key': 'epic', 'title': data.get('summary') or data.get('slug') or 'Humanize Flow epic', 'type': 'epic', 'priority': 1, 'labels': []})
+epic_id = create_item(epic, None)
+key_to_id = {epic.get('key', 'epic'): epic_id}
+
+tasks = bd.get('tasks') or []
+for task in tasks:
+    bid = create_item(task, epic_id)
+    key_to_id[task.get('key') or bid] = bid
+
+for task in tasks:
+    child_id = task.get('bd_id')
+    for dep_key in task.get('depends_on_keys') or []:
+        parent_id = key_to_id.get(dep_key)
+        if child_id and parent_id:
+            run(['bd', 'dep', 'add', child_id, parent_id])
+
+bd['materialized'] = True
+data['bd'] = bd
+data['state'] = 'approved'
+data['updated_at'] = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+print(f'Materialized {len(tasks)} task(s) under epic {epic_id}.')
+PY
+}
+
+find_slug_for_bd_id() {
+  local bd_id
+  bd_id="$1"
+  python3 - "$(state_dir)/handoffs" "$bd_id" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1]); target = sys.argv[2]
+for path in sorted(root.glob('*.json')):
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        continue
+    ids = []
+    source = data.get('source', {})
+    if isinstance(source, dict):
+        if source.get('bd_id'):
+            ids.append(source.get('bd_id'))
+        ids.extend(source.get('bd_ids') or [])
+    execution = data.get('execution', {})
+    if isinstance(execution, dict) and execution.get('current_bd_id'):
+        ids.append(execution.get('current_bd_id'))
+    epic = data.get('bd', {}).get('epic', {})
+    if epic.get('bd_id'):
+        ids.append(epic.get('bd_id'))
+    for task in data.get('bd', {}).get('tasks', []):
+        if task.get('bd_id'):
+            ids.append(task.get('bd_id'))
+    if target in ids:
+        print(data.get('slug') or path.stem)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+cmd_run() {
+  require_git_repo
+  local bd_id slug file run_dir prompt_file final_file skill_file skill_text prompt_text claude_args
+  bd_id="${1:-}"; [ -n "$bd_id" ] || die "Usage: humanize-flow run BD_ID"
+  command_exists claude || die "claude CLI not found."
+  command_exists bd || warn "bd CLI not found; worker prompt will still reference task id."
+  slug="$(find_slug_for_bd_id "$bd_id" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
+  run_dir="$(state_dir)/runs/$(timestamp)-run-$bd_id"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/claude-worker-prompt.md"
+  final_file="$run_dir/claude-final.md"
+  skill_file="$(worker_skill_file || true)"
+
+  if [ -n "$skill_file" ]; then skill_text="$(cat "$skill_file")"; else skill_text=""; fi
+
+  cat > "$prompt_file" <<EOF
+You are the Claude Code implementer in the Humanize Flow workflow.
+
+Task id: $bd_id
+Handoff slug: ${slug:-unknown}
+Handoff path: ${file:-not-found}
+Repository root: $(repo_root)
+
+Embedded worker skill instructions follow. Treat them as authoritative for this run.
+
+--- BEGIN humanize-flow-worker SKILL.md ---
+$skill_text
+--- END humanize-flow-worker SKILL.md ---
+
+Required behavior:
+- Read the Beads task with: bd show $bd_id --json
+- Read the handoff, plan, and acceptance criteria if available.
+- Do not expand scope beyond this task.
+- Prefer humanize/RLCR for complex implementation if it is installed and usable in this Claude Code context.
+- If humanize is unavailable, implement directly and preserve the review boundary.
+- Run relevant tests.
+- Write an implementation summary under docs/humanize-flow/<slug>/implementation/ when a slug is known.
+- Update Beads notes/status with what changed, tests run, and remaining risks.
+- Stop with a clear summary and request Codex review via: humanize-flow review $bd_id
+EOF
+
+  info "worker prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  claude_args="${HUMANIZE_FLOW_CLAUDE_ARGS:-}"
+  # shellcheck disable=SC2086
+  claude -p "$prompt_text" $claude_args | tee "$final_file"
+}
+
+cmd_run_next() {
+  require_git_repo
+  command_exists bd || die "bd CLI not found."
+  local tmp bd_id
+  tmp="$(state_dir)/tmp/bd-ready-$(timestamp).json"
+  mkdir -p "$(dirname "$tmp")"
+  bd ready --json > "$tmp"
+  bd_id="$(python3 - "$tmp" "$(state_dir)/handoffs" <<'PY'
+import json, sys
+from pathlib import Path
+ready_path = Path(sys.argv[1])
+handoffs_dir = Path(sys.argv[2])
+try:
+    data = json.loads(ready_path.read_text())
+except Exception:
+    raise SystemExit(1)
+if isinstance(data, dict):
+    items = data.get('issues') or data.get('items') or data.get('data') or []
+elif isinstance(data, list):
+    items = data
+else:
+    items = []
+
+def labels_of(item):
+    labels = item.get('labels') or item.get('label_names') or []
+    if isinstance(labels, str):
+        labels = [x.strip() for x in labels.split(',') if x.strip()]
+    return labels
+
+def item_id(item):
+    for key in ('id', 'issue_id', 'bead_id'):
+        v = item.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+approved_ids = set()
+if handoffs_dir.exists():
+    for path in sorted(handoffs_dir.glob('*.json')):
+        try:
+            h = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if h.get('approval', {}).get('status') != 'approved':
+            continue
+        source = h.get('source') or {}
+        if isinstance(source, dict):
+            if source.get('bd_id'):
+                approved_ids.add(source['bd_id'])
+            for bid in source.get('bd_ids') or []:
+                approved_ids.add(bid)
+        execution = h.get('execution') or {}
+        if isinstance(execution, dict) and execution.get('current_bd_id'):
+            approved_ids.add(execution['current_bd_id'])
+        bd = h.get('bd') or {}
+        epic = bd.get('epic') or {}
+        if epic.get('bd_id'):
+            approved_ids.add(epic['bd_id'])
+        for task in bd.get('tasks') or []:
+            if isinstance(task, dict) and task.get('bd_id'):
+                approved_ids.add(task['bd_id'])
+
+chosen = None
+for item in items:
+    if isinstance(item, dict):
+        iid = item_id(item)
+        if iid and iid in approved_ids:
+            chosen = iid
+            break
+if not chosen:
+    for item in items:
+        if isinstance(item, dict) and 'humanize-flow' in labels_of(item):
+            chosen = item_id(item)
+            if chosen:
+                break
+if not chosen:
+    for item in items:
+        if isinstance(item, dict):
+            chosen = item_id(item)
+            if chosen:
+                break
+if chosen:
+    print(chosen)
+PY
+)"
+  [ -n "$bd_id" ] || die "No ready Beads task found."
+  info "selected ready task: $bd_id"
+  cmd_run "$bd_id"
+}
+
+cmd_review() {
+  require_git_repo
+  local bd_id slug file run_dir prompt_file review_dir review_file base prompt_text
+  bd_id="${1:-}"; [ -n "$bd_id" ] || die "Usage: humanize-flow review BD_ID"
+  command_exists codex || die "codex CLI not found."
+  slug="$(find_slug_for_bd_id "$bd_id" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
+  run_dir="$(state_dir)/runs/$(timestamp)-review-$bd_id"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/codex-reviewer-prompt.md"
+  review_dir="$(docs_dir)/${slug:-unknown}/reviews"
+  mkdir -p "$review_dir"
+  review_file="$review_dir/$(timestamp)-$bd_id.md"
+  base="$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+
+  cat > "$prompt_file" <<EOF
+$(reviewer_skill_hint)
+
+You are running the Humanize Flow reviewer for this repository.
+
+Task id: $bd_id
+Handoff slug: ${slug:-unknown}
+Handoff path: ${file:-not-found}
+Review output path requested by caller: $review_file
+Suggested git base: $base
+
+Follow the humanize-flow-reviewer skill exactly:
+- Inspect the Beads task, handoff, plan, acceptance criteria, git status, and diff.
+- Do not implement fixes.
+- Produce a review in Markdown using verdict: pass, changes_requested, or blocked.
+- Include blocking findings with severity labels [P0]..[P3].
+- State exactly what must happen before the task can close.
+EOF
+
+  info "review prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  codex exec ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$review_file"
+  info "review written: $review_file"
+}
+
+cmd_status() {
+  require_git_repo
+  local hdir
+  hdir="$(state_dir)/handoffs"
+  if [ ! -d "$hdir" ]; then
+    warn "No .humanize-flow/handoffs directory. Run humanize-flow init first."
+  else
+    python3 - "$hdir" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+print('Handoffs:')
+for path in sorted(root.glob('*.json')):
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception as e:
+        print(f'  {path.name}: invalid JSON: {e}')
+        continue
+    approval = data.get('approval', {}).get('status', 'unknown')
+    materialized = data.get('bd', {}).get('materialized', False)
+    print(f"  {data.get('slug', path.stem):24} state={data.get('state','?'):18} approval={approval:9} bd_materialized={materialized}")
+PY
+  fi
+  if command_exists bd; then
+    log ""
+    log "Ready Beads tasks:"
+    bd ready --json 2>/dev/null || bd ready || true
+  fi
+}
+
+main() {
+  local cmd
+  cmd="${1:-help}"
+  if [ $# -gt 0 ]; then shift; fi
+  case "$cmd" in
+    help|--help|-h) usage ;;
+    version|--version) log "$HF_VERSION" ;;
+    paths) cmd_paths "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    init) cmd_init "$@" ;;
+    plan) cmd_plan "$@" ;;
+    plan-from-bd|from-bd) cmd_plan_from_bd "$@" ;;
+    approve) cmd_approve "$@" ;;
+    materialize-bd) cmd_materialize_bd "$@" ;;
+    run) cmd_run "$@" ;;
+    run-next) cmd_run_next "$@" ;;
+    review) cmd_review "$@" ;;
+    status) cmd_status "$@" ;;
+    *) die "Unknown command: $cmd. Run 'humanize-flow help'." ;;
+  esac
+}
+
+main "$@"
