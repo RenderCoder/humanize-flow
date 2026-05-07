@@ -99,7 +99,7 @@ humanize-flow run-next
 humanize-flow run <bd-id>
 ```
 
-Worker 会读取 Beads 任务、handoff、plan 和 acceptance criteria，只实现一个已批准任务；复杂任务可选使用 humanize/RLCR；完成后记录测试证据并请求 review。
+Worker 会读取 Beads 任务、已批准 handoff、plan 和 acceptance criteria。Beads 文本可以刻意保持简洁；详细执行契约在 Markdown 产物里。如果缺少已批准 handoff、`plan.md` 或 `acceptance.md`，worker 应该停止，而不是只根据 Beads 任务实现。
 
 ## 5. 用 Codex 审查
 
@@ -113,6 +113,8 @@ Reviewer 会对照批准的产物进行审查，并返回：
 - `changes_requested`
 - `blocked`
 
+缺少 handoff、plan 或 acceptance 证据时应该返回 `blocked`，而不是 `pass`。
+
 ## 6. 迭代或关闭
 
 如果需要修改，把 review findings 交给 worker 继续修。如果 review 通过，则按项目策略关闭 Beads 任务。
@@ -122,4 +124,5 @@ Reviewer 会对照批准的产物进行审查，并返回：
 ```bash
 humanize-flow commit
 humanize-flow push
+humanize-flow pr
 ```

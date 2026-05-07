@@ -21,6 +21,8 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 }
 ```
 
+简短 Beads description 不足以授权实现。Worker 和 reviewer 流程必须读取已批准 handoff、`plan.md` 和 `acceptance.md`；缺失这些产物时应该停止实现或阻塞 review。
+
 ## 权限建议
 
 使用最小权限。规划阶段通常只需要 `codex exec --sandbox workspace-write` 来写规划产物。审查阶段优先采用只读行为。

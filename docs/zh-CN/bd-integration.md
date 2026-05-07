@@ -99,6 +99,8 @@ Worker 应读取任务：
 bd show <bd-id> --json
 ```
 
+Beads 任务是队列记忆，不是完整实现契约。由 Humanize Flow 创建的 Beads description 会在路径已知时链接回 handoff、request、plan、acceptance criteria 和 Beads plan。Worker 必须读取已批准 handoff、`plan.md` 和 `acceptance.md`；如果这些产物缺失，应该停止，而不是只根据简短 Beads 文本实现。
+
 它不应该静默扩大范围。发现的新工作应按项目策略创建新的 Beads issue 或作为 reviewer finding 记录。
 
 ## `run-next` 行为
@@ -109,4 +111,4 @@ bd show <bd-id> --json
 
 ## Review 使用
 
-Reviewer 应把 Beads 数据作为事实来源之一，但也必须检查已批准 handoff 和 git diff。
+Reviewer 应把 Beads 数据作为事实来源之一，但也必须检查已批准 handoff、`plan.md`、`acceptance.md` 和 git diff。如果已批准 Markdown 产物缺失，正确结论是 `blocked`。

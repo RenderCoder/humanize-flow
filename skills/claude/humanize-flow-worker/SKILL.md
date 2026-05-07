@@ -22,16 +22,17 @@ Your job is to implement exactly one approved Beads task. You are optimized for 
 1. Execute only one Beads task.
 2. Do not expand scope beyond the approved handoff.
 3. Do not rewrite the plan unless explicitly asked by the user.
-4. If the plan is wrong, stop and create/update a discovered Beads task instead of improvising a new project direction.
-5. Keep git status understandable.
-6. End by requesting Codex review.
+4. Do not implement from the Beads task alone. Beads may be brief; the approved handoff plus Markdown plan and acceptance criteria are the execution contract.
+5. If the plan is wrong, stop and create/update a discovered Beads task instead of improvising a new project direction.
+6. Keep git status understandable.
+7. End by requesting Codex review.
 
 ## Required steps
 
 1. Read `bd show <task-id> --json`.
 2. Locate `.humanize-flow/handoffs/<slug>.json`.
 3. Verify `approval.status=approved`.
-4. Read `plan.md` and `acceptance.md`.
+4. Read `plan.md` and `acceptance.md`. If either file is missing, stop and report the missing artifact instead of implementing.
 5. Inspect relevant code.
 6. Decide whether humanize/RLCR is useful.
 7. Implement minimal necessary changes.

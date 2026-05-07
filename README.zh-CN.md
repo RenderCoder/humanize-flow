@@ -78,15 +78,16 @@ humanize-flow run-next
 humanize-flow review <bd-id>
 humanize-flow commit
 humanize-flow push
+humanize-flow pr
 ```
 
-Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-opus-4-7`，权限模式为 `auto`。Codex planner/reviewer/commit 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
+Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-opus-4-7`，权限模式为 `auto`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
 
-Review 通过后，如果当前没有 staged changes，`humanize-flow commit` 会先让 Codex 判断哪些变更文件属于本次提交，只 stage 这些路径，再起草 Lore commit message，并在确认后提交。如果你已经手动 stage 了一部分 diff，它只提交这部分 staged diff。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。
+Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，把草稿保存在 `.humanize-flow/runs/`，然后用 `gh pr create` 创建 PR。
 
 ## 从已有 Beads 任务开始规划
 
@@ -120,6 +121,8 @@ humanize-flow plan-from-bd bd-1234 --slug undo-redo
 ```
 
 面向人类的生成产物默认使用英文。可以用 `humanize-flow i18n zh` 把完整链路切换到简体中文，包括规划文档、Beads 任务文本、实现总结、review 报告和 commit message 正文。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+
+Beads 任务可以保持简洁，便于队列浏览。真正的执行契约不是简短的 Beads 文本本身：Claude Code worker prompt 要求读取已批准 handoff、`plan.md` 和 `acceptance.md`，Codex review 在这些产物缺失时会返回 blocked。
 
 如果关键需求仍不明确，planner 应该写入 `docs/humanize-flow/<slug>/questions.md` 并停止，而不是替你做高影响决策。
 

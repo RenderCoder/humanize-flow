@@ -168,16 +168,16 @@ humanize-flow review <handoff-slug>
 
 ## `humanize-flow commit`
 
-使用 Codex 起草 Lore commit message，并提交当前变更。
+使用 Codex 选择提交路径、起草 Lore commit message，并提交被选中的变更。
 
 ```bash
 humanize-flow commit
 humanize-flow commit --yes
 ```
 
-如果当前没有 staged diff，Codex 会先根据 `git status`、diff，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交；CLI 只 stage 这些被选中的路径。如果已经有 staged diff，则只提交已有 staged diff，并保留未 staged 的变更。被选中的路径会写到 `.humanize-flow/runs/<timestamp>-commit/stage-paths.txt`，生成的 message 会写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，展示后再询问是否提交；传 `--yes` 时跳过确认。
+Codex 每次都会根据 `git status`、staged diff、unstaged diff、untracked files，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考：Codex 可以纳入相关的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，把路径列表写到 `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`，把生成的 message 写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，展示被选中 diffstat 和 message，然后只提交这些被选中的路径。传 `--yes` 时跳过确认。
 
-如果 `git commit` 因 hook、lint、format、typecheck 或测试命令失败而失败，命令会把完整输出保存到 `.humanize-flow/runs/<timestamp>-commit/git-commit.log`。在交互终端中，它会询问是否创建一个 Beads 修复任务。Codex 会根据 hook 输出和 staged diff 起草任务；CLI 不会静默创建这个任务。
+如果 `git commit` 因 hook、lint、format、typecheck 或测试命令失败而失败，命令会把完整输出保存到 `.humanize-flow/runs/<timestamp>-commit/git-commit.log`。在交互终端中，它会询问是否创建一个 Beads 修复任务。Codex 会根据 hook 输出和被选中的 diff 起草任务；CLI 不会静默创建这个任务。
 
 ## `humanize-flow push`
 
@@ -189,6 +189,31 @@ humanize-flow push --remote origin
 ```
 
 如果只有一个 remote，CLI 会直接推送。如果有多个 remote，会列出来并要求输入数字或 remote 名称。非交互模式下请传 `--remote`。
+
+## `humanize-flow pr`
+
+使用 Codex 起草专业的 GitHub Pull Request，并通过 GitHub CLI 创建。
+
+```bash
+humanize-flow pr
+humanize-flow pr --base main --head feature-branch
+humanize-flow pr --draft --push --yes
+humanize-flow pr --dry-run
+```
+
+该命令会检查当前分支提交、diff、Humanize Flow 产物、handoff、实现总结、review 报告和仓库约束。它会让 Codex 生成结构化 PR 草稿，写入 `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` 和 `pr-body.md`，展示草稿后调用 `gh pr create --title ... --body-file ...`。
+
+选项：
+
+- `--base <branch>`：PR 目标分支。默认依次使用当前分支的 `gh-merge-base`、`origin/HEAD`、`main`、`master`。
+- `--head <branch>`：PR 来源分支，默认当前分支。
+- `--draft`：创建 draft PR。
+- `--push`：创建 PR 前先推送当前分支。
+- `--remote <name>`：`--push` 使用的 remote。
+- `--yes`：展示生成的 PR 草稿后跳过确认。
+- `--dry-run`：只生成并展示草稿，不创建 PR。
+
+PR 标题和正文遵循 `humanize-flow i18n` 或 `HUMANIZE_FLOW_LANGUAGE` 配置的工作流语言。文件路径、命令、label、JSON key、API、Beads ID、分支名和 commit hash 保持原始形式。
 
 ## `humanize-flow status`
 
@@ -206,8 +231,8 @@ humanize-flow status
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | 传给 `claude -p` 的额外参数。 |
 | `HUMANIZE_FLOW_CLAUDE_MODEL` | 覆盖 Claude Code worker 模型配置。 |
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | 覆盖 Claude Code 权限模式配置。 |
-| `HUMANIZE_FLOW_CODEX_MODEL` | 覆盖 planner/review/commit 使用的 Codex 模型配置。 |
-| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | 覆盖 planner/review/commit 使用的 Codex 推理强度配置。 |
+| `HUMANIZE_FLOW_CODEX_MODEL` | 覆盖 planner/review/commit/pr 使用的 Codex 模型配置。 |
+| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | 覆盖 planner/review/commit/pr 使用的 Codex 推理强度配置。 |
 | `HUMANIZE_FLOW_LANGUAGE` | 对单次命令覆盖生成产物语言。 |
 | `HUMANIZE_FLOW_CODEX_ARGS` | 传给 `codex exec` 的额外参数。 |
 | `HUMANIZE_FLOW_BIN_DIR` | CLI 安装位置。 |

@@ -77,11 +77,21 @@ cat > "$TMP/fake-bin/codex" <<'CODEX'
 set -euo pipefail
 printf '%s\n' "$*" > "$CODEX_ARGS_CAPTURE"
 case "$*" in
-  *"selecting which changed files should be staged"*)
+  *"selecting which changed files belong in one git commit"*)
     printf 'commit-test.txt\n'
     ;;
   *"drafting a Beads task for a failed git commit hook"*)
     printf '{"title":"Fix commit hook eslint failure","description":"Commit hook failed because eslint was unavailable.","priority":2,"labels":["humanize-flow","commit-hook","eslint"]}\n'
+    ;;
+  *"drafting a professional GitHub pull request"*)
+    case "$*" in
+      *"language code: zh"*)
+        printf '{"title":"完善 Humanize Flow 执行链路","body":"## 摘要\\n- 新增 PR 创建流程。\\n\\n## 验证\\n- make test"}\n'
+        ;;
+      *)
+        printf '{"title":"Improve Humanize Flow delivery automation","body":"## Summary\\n- Add PR creation flow.\\n\\n## Verification\\n- make test"}\n'
+        ;;
+    esac
     ;;
   *)
     printf 'fake review\n'
@@ -89,9 +99,30 @@ case "$*" in
 esac
 CODEX
 chmod +x "$TMP/fake-bin/codex"
+cat > "$TMP/fake-bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$GH_ARGS_CAPTURE"
+case "$*" in
+  *"pr create"*)
+    printf 'https://github.com/example/repo/pull/1\n'
+    ;;
+  *)
+    printf 'fake gh only supports pr create\n' >&2
+    exit 2
+    ;;
+esac
+GH
+chmod +x "$TMP/fake-bin/gh"
 (
   cd "$TMP/repo"
   git init -q
+  git config user.email smoke@example.com
+  git config user.name "Smoke Test"
+  printf 'base\n' > base.txt
+  git add base.txt
+  git commit -qm 'Initial smoke baseline'
+  git branch -M main
   PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan-from-bd bd-1234 --slug imported-task --no-codex >/dev/null
   grep -R 'language code: en' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
   HUMANIZE_FLOW_LANGUAGE=zh PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan-from-bd bd-1234 --slug imported-task-zh --no-codex >/dev/null
@@ -141,11 +172,21 @@ PY
   HUMANIZE_FLOW_CODEX_MODEL=gpt-5.5 HUMANIZE_FLOW_CODEX_REASONING_EFFORT=high CODEX_ARGS_CAPTURE="$TMP/codex-configured-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
   grep -q -- '--model gpt-5.5' "$TMP/codex-configured-review-args.txt"
   grep -q -- '-c model_reasoning_effort="high"' "$TMP/codex-configured-review-args.txt"
+  git checkout -qb feature/pr-smoke
+  printf 'pr\n' > pr-change.txt
+  git add pr-change.txt
+  git commit -qm 'Add PR smoke change'
+  HUMANIZE_FLOW_LANGUAGE=zh CODEX_ARGS_CAPTURE="$TMP/codex-pr-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --yes >/dev/null
+  grep -q 'language code: zh' "$TMP/codex-pr-args.txt"
+  grep -q -- 'pr create --base main --head feature/pr-smoke' "$TMP/gh-pr-args.txt"
+  grep -q -- '--title 完善 Humanize Flow 执行链路' "$TMP/gh-pr-args.txt"
+  grep -R '## 摘要' .humanize-flow/runs/*/pr-body.md >/dev/null
+  CODEX_ARGS_CAPTURE="$TMP/codex-pr-dry-run-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-dry-run-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --dry-run >/dev/null
   printf 'change\n' > commit-test.txt
   CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >/dev/null
   git log -1 --pretty=%B | grep -q 'fake review'
   git show --name-only --pretty='' HEAD | grep -q '^commit-test.txt$'
-  grep -R '^commit-test.txt$' .humanize-flow/runs/*/stage-paths.txt >/dev/null
+  grep -R '^commit-test.txt$' .humanize-flow/runs/*/commit-paths.txt >/dev/null
   printf '#!/usr/bin/env bash\nprintf "lefthook pre-commit failed: eslint not found\\n" >&2\nexit 1\n' > .git/hooks/pre-commit
   chmod +x .git/hooks/pre-commit
   printf 'again\n' >> commit-test.txt

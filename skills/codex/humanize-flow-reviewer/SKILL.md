@@ -23,12 +23,14 @@ Your job is to determine whether one implemented Beads task satisfies its approv
 3. Review only the requested task and directly related diff.
 4. Prefer specific findings with file paths, evidence, and reproduction steps.
 5. Missing evidence is not a pass. Use `blocked` or `changes_requested` when key artifacts are missing.
+6. Do not review from the Beads task alone. Beads may be brief; the approved handoff, Markdown plan, and acceptance criteria define the scope.
 
 ## Required checks
 
 - Read the Beads task: `bd show <id> --json`.
 - Read the handoff manifest if available.
 - Read `plan.md` and `acceptance.md`.
+- Return `blocked` if the approved handoff, `plan.md`, or `acceptance.md` is missing.
 - Inspect `git status --short`.
 - Inspect the relevant diff, ideally against the branch base.
 - Check test evidence from worker summaries and run lightweight read-only checks when useful.

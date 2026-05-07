@@ -99,6 +99,8 @@ The worker should read the task:
 bd show <bd-id> --json
 ```
 
+The Beads task is queue memory, not the whole implementation contract. Humanize Flow-created Beads descriptions include links back to the handoff, request, plan, acceptance criteria, and Beads plan when those paths are known. The worker must read the approved handoff plus `plan.md` and `acceptance.md`; if those artifacts are missing, it should stop instead of implementing from the concise Beads text alone.
+
 It should not silently expand scope. Discovered work should become a new Beads issue or a reviewer finding, depending on project policy.
 
 ## `run-next` behavior
@@ -109,4 +111,4 @@ In non-interactive scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use the dete
 
 ## Review usage
 
-The reviewer should use Beads data as one source of truth, but it must also inspect the approved handoff and git diff.
+The reviewer should use Beads data as one source of truth, but it must also inspect the approved handoff, `plan.md`, `acceptance.md`, and git diff. If the approved Markdown artifacts are missing, the correct verdict is `blocked`.

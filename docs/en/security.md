@@ -21,6 +21,8 @@ Implementation should not begin until the handoff contains:
 }
 ```
 
+Brief Beads descriptions are not enough authority for implementation. Worker and reviewer flows must read the approved handoff plus `plan.md` and `acceptance.md`; missing artifacts should stop implementation or block review.
+
 ## Permission guidance
 
 Use least privilege. For planning, `codex exec --sandbox workspace-write` is enough to write planning artifacts. For review, read-only behavior is preferred when practical.

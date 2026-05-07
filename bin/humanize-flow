@@ -39,8 +39,9 @@ Commands:
   run BD_ID_OR_SLUG [options]  Run Claude Code worker for one Beads task.
   run-next                     Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
   review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
-  commit [--yes]               Use Codex to write a Lore commit message and commit staged changes.
+  commit [--yes]               Use Codex to select changes, write a Lore message, and commit.
   push [--remote NAME]         Push the current branch, prompting for a remote when needed.
+  pr [options]                 Use Codex to draft a professional PR and create it with GitHub CLI.
   i18n [LANG]                  Show or set artifact language (en, zh).
   status                       Show handoff and Beads queue status.
   config get KEY               Show resolved config value.
@@ -53,9 +54,9 @@ Environment:
   HUMANIZE_FLOW_CLAUDE_MODEL   Override Claude Code model for worker runs.
   HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE
                                Override Claude Code permission mode for worker runs.
-  HUMANIZE_FLOW_CODEX_MODEL    Override Codex model for planner/review/commit runs.
+  HUMANIZE_FLOW_CODEX_MODEL    Override Codex model for planner/review/commit/pr runs.
   HUMANIZE_FLOW_CODEX_REASONING_EFFORT
-                               Override Codex reasoning effort for planner/review/commit runs.
+                               Override Codex reasoning effort for planner/review/commit/pr runs.
   HUMANIZE_FLOW_LANGUAGE       Override artifact language for one command.
   HUMANIZE_FLOW_CODEX_ARGS     Extra Codex exec args. Default: empty.
   HUMANIZE_FLOW_NONINTERACTIVE Set to 1 to avoid interactive prompts in scripts.
@@ -71,6 +72,7 @@ Examples:
   humanize-flow review bd-a1b2
   humanize-flow commit
   humanize-flow push
+  humanize-flow pr --base main
 EOF
 }
 
@@ -950,11 +952,33 @@ def find_id(obj):
                 return found
     return None
 
+def artifact_context():
+    artifacts = data.get('artifacts') or {}
+    slug = data.get('slug') or path.stem
+    entries = [
+        ('Handoff', f'.humanize-flow/handoffs/{slug}.json'),
+        ('Request', artifacts.get('request')),
+        ('Plan', artifacts.get('plan')),
+        ('Acceptance', artifacts.get('acceptance')),
+        ('Beads plan', artifacts.get('bd_plan')),
+    ]
+    lines = ['Humanize Flow context:']
+    for label, value in entries:
+        if value:
+            lines.append(f'- {label}: `{value}`')
+    return '\n'.join(lines)
+
 def create_item(item, parent_id=None):
     title = item.get('title') or item.get('key') or 'Humanize Flow task'
     typ = item.get('type') or 'task'
     priority = str(item.get('priority', 2))
     desc = item.get('description') or ''
+    context = artifact_context()
+    if 'Humanize Flow context:' not in desc:
+        desc = desc.rstrip()
+        if desc:
+            desc += '\n\n'
+        desc += context
     labels = list(item.get('labels') or [])
     if 'humanize-flow' not in labels:
         labels.insert(0, 'humanize-flow')
@@ -1190,7 +1214,8 @@ $skill_text
 
 Required behavior:
 - Read the Beads task with: bd show $bd_id --json
-- Read the handoff, plan, and acceptance criteria if available.
+- Read the approved handoff, plan, and acceptance criteria before implementing.
+- If the approved handoff, plan, or acceptance criteria cannot be found, stop and report the missing artifact instead of implementing from the brief Beads task alone.
 - Do not expand scope beyond this task.
 - Prefer humanize/RLCR for complex implementation if it is installed and usable in this Claude Code context.
 - If humanize is unavailable, implement directly and preserve the review boundary.
@@ -1483,6 +1508,7 @@ $(language_instruction)
 
 Follow the humanize-flow-reviewer skill exactly:
 - Inspect the Beads task, handoff, plan, acceptance criteria, git status, and diff.
+- Treat a missing approved handoff, plan, or acceptance criteria as a blocked review, not a pass.
 - Do not implement fixes.
 - Produce a review in Markdown using verdict: pass, changes_requested, or blocked.
 - Include blocking findings with severity labels [P0]..[P3].
@@ -1500,6 +1526,15 @@ commit_failure_looks_hook_related() {
   local log_file
   log_file="$1"
   grep -Eiq '(hook|pre-commit|pre commit|lefthook|husky|lint-staged|eslint|prettier|typecheck|tsc|biome|stylelint|test)' "$log_file"
+}
+
+show_selected_cached_stat() {
+  local paths_file path
+  paths_file="$1"
+  while IFS= read -r path || [ -n "$path" ]; do
+    [ -n "$path" ] || continue
+    git diff --cached --stat -- "$path"
+  done < "$paths_file"
 }
 
 create_commit_failure_bd() {
@@ -1533,9 +1568,10 @@ $(language_instruction)
 Inspect:
 - Commit failure log: $log_file
 - Proposed commit message: $message_file
+- Selected commit paths when available: $(dirname "$message_file")/commit-paths.txt
 - git status --short --untracked-files=all
-- git diff --cached --stat
-- git diff --cached
+- git diff --cached --stat for the selected commit paths
+- git diff --cached for the selected commit paths
 - Relevant repository guidance files, especially AGENTS.md and CLAUDE.md when present.
 
 Return only JSON with this shape:
@@ -1631,7 +1667,7 @@ handle_commit_failure() {
 
 cmd_commit() {
   require_git_repo
-  local yes=0 message_file prompt_file run_dir prompt_text subject first_line stage_prompt_file stage_paths_file selected_count path commit_log commit_status
+  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file selected_count path commit_log commit_status answer
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
@@ -1640,10 +1676,9 @@ cmd_commit() {
 Usage:
   humanize-flow commit [--yes]
 
-Creates a commit with a Codex-drafted Lore commit message. If no changes are
-already staged, Codex first selects which changed files should be staged based
-on git status, the diff, and repository guidance such as AGENTS.md/CLAUDE.md.
-If changes are already staged, the command commits only the staged diff.
+Creates a commit with Codex-selected paths and a Codex-drafted Lore commit
+message. Codex always reviews the full working tree, including staged and
+unstaged changes, then selects which changed paths belong in this commit.
 EOF
         return 0 ;;
       *) die "Unknown commit option: $1" ;;
@@ -1655,70 +1690,75 @@ EOF
   mkdir -p "$run_dir"
   stage_prompt_file="$run_dir/codex-stage-prompt.md"
   stage_paths_file="$run_dir/stage-paths.txt"
-  if git diff --cached --quiet; then
-    if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
-      die "No changes to commit."
-    fi
-    cat > "$stage_prompt_file" <<EOF
-You are selecting which changed files should be staged for one git commit.
+  commit_paths_file="$run_dir/commit-paths.txt"
+  if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
+    die "No changes to commit."
+  fi
+  cat > "$stage_prompt_file" <<EOF
+You are selecting which changed files belong in one git commit.
 
 $(language_instruction)
 
 Inspect:
 - git status --short --untracked-files=all
+- git diff --cached --stat
+- git diff --cached
 - git diff --stat
 - git diff
 - Relevant repository guidance files, especially AGENTS.md and CLAUDE.md in the root or along changed paths when present.
 
 Rules:
-- Return only repository-relative file paths to stage, one per line.
+- Return only repository-relative file paths to commit, one per line.
 - Do not return Markdown, bullets, quotes, explanations, directories, commands, or absolute paths.
 - Include only files that belong in this commit.
+- Treat existing staged changes as advisory context only; they may be accidental, incomplete, or unrelated.
+- Include unstaged paths when they belong with the commit, even if other paths were already staged.
+- Exclude staged paths when they do not belong with the commit.
 - Exclude unrelated user changes, generated local runtime files, accidental command output, secrets, credentials, build artifacts, temp files, and anything repository guidance says not to commit.
-- If no changed file should be staged, return exactly: NONE
+- If no changed file should be committed, return exactly: NONE
 - Do not run git add, git commit, or modify files.
 EOF
-    info "stage selection prompt: $stage_prompt_file"
-    prompt_text="$(cat "$stage_prompt_file")"
-    # shellcheck disable=SC2086
-    run_codex_exec "$prompt_text" > "$stage_paths_file"
-    sed -i.bak '/^```/d' "$stage_paths_file"
-    rm -f "$stage_paths_file.bak"
-    selected_count=0
-    while IFS= read -r path || [ -n "$path" ]; do
-      path="${path%$'\r'}"
-      [ -n "$path" ] || continue
-      [ "$path" != "NONE" ] || continue
-      case "$path" in
-        /*|../*|*/../*|.git|.git/*)
-          die "Codex selected an unsafe path to stage: $path"
-          ;;
-      esac
-      if [ -z "$(git status --porcelain --untracked-files=all -- "$path")" ]; then
-        die "Codex selected a path with no working tree changes: $path"
-      fi
-      git add -- "$path"
-      selected_count=$((selected_count + 1))
-    done < "$stage_paths_file"
-    [ "$selected_count" -gt 0 ] || die "Codex did not select any files to stage. Selection kept at $stage_paths_file"
-    info "staged $selected_count path(s) selected by Codex; selection saved: $stage_paths_file"
-  else
-    info "using existing staged changes; unstaged changes are left untouched."
-  fi
-  if git diff --cached --quiet; then
-    die "No staged changes to commit after staging."
-  fi
+  info "commit path selection prompt: $stage_prompt_file"
+  prompt_text="$(cat "$stage_prompt_file")"
+  # shellcheck disable=SC2086
+  run_codex_exec "$prompt_text" > "$stage_paths_file"
+  sed -i.bak '/^```/d' "$stage_paths_file"
+  rm -f "$stage_paths_file.bak"
+  : > "$commit_paths_file"
+  selected_count=0
+  while IFS= read -r path || [ -n "$path" ]; do
+    path="${path%$'\r'}"
+    [ -n "$path" ] || continue
+    [ "$path" != "NONE" ] || continue
+    case "$path" in
+      /*|../*|*/../*|.git|.git/*)
+        die "Codex selected an unsafe path to commit: $path"
+        ;;
+    esac
+    if [ -z "$(git status --porcelain --untracked-files=all -- "$path")" ]; then
+      die "Codex selected a path with no working tree changes: $path"
+    fi
+    printf '%s\n' "$path" >> "$commit_paths_file"
+    git add -- "$path"
+    selected_count=$((selected_count + 1))
+  done < "$stage_paths_file"
+  [ "$selected_count" -gt 0 ] || die "Codex did not select any files to commit. Selection kept at $stage_paths_file"
+  info "selected $selected_count path(s) for commit; selection saved: $commit_paths_file"
   prompt_file="$run_dir/codex-commit-prompt.md"
   message_file="$run_dir/commit-message.txt"
   cat > "$prompt_file" <<EOF
-You are writing a git commit message for staged changes only.
+You are writing a git commit message for the selected commit paths only.
+
+Selected paths:
+$(sed 's/^/- /' "$commit_paths_file")
 
 $(language_instruction)
 
 Inspect:
 - git status --short
-- git diff --cached --stat
-- git diff --cached
+- Selected path list: $commit_paths_file
+- git diff --cached --stat -- <selected paths>
+- git diff --cached -- <selected paths>
 
 Return only the commit message, with no Markdown fences and no explanation.
 Use the Lore Commit Protocol:
@@ -1745,8 +1785,8 @@ EOF
   rm -f "$message_file.bak"
   first_line="$(sed -n '1p' "$message_file")"
   [ -n "$first_line" ] || die "Codex returned an empty commit message."
-  info "staged changes:"
-  git diff --cached --stat
+  info "selected changes:"
+  show_selected_cached_stat "$commit_paths_file"
   info "commit message: $message_file"
   log ""
   sed -n '1,120p' "$message_file"
@@ -1761,7 +1801,7 @@ EOF
   fi
   commit_log="$run_dir/git-commit.log"
   set +e
-  git commit -F "$message_file" > "$commit_log" 2>&1
+  git commit --only --pathspec-from-file="$commit_paths_file" -F "$message_file" > "$commit_log" 2>&1
   commit_status=$?
   set -e
   if [ "$commit_status" -ne 0 ]; then
@@ -1828,6 +1868,190 @@ EOF
   git push -u "$remote" "$branch"
 }
 
+guess_pr_base() {
+  local branch configured origin_head
+  branch="$(git branch --show-current)"
+  configured="$(git config --get "branch.$branch.gh-merge-base" 2>/dev/null || true)"
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  origin_head="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  if [ -n "$origin_head" ]; then
+    printf '%s\n' "$origin_head"
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/main || git show-ref --verify --quiet refs/remotes/origin/main; then
+    printf 'main\n'
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master; then
+    printf 'master\n'
+    return 0
+  fi
+  printf 'main\n'
+}
+
+cmd_pr() {
+  require_git_repo
+  local base="" head="" draft=0 dry_run=0 yes=0 push_first=0 remote="" run_dir prompt_file draft_file title_file body_file prompt_text branch merge_base pr_url answer
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) shift; base="${1:-}" ;;
+      --head) shift; head="${1:-}" ;;
+      --remote) shift; remote="${1:-}" ;;
+      --draft) draft=1 ;;
+      --dry-run) dry_run=1 ;;
+      --yes|-y) yes=1 ;;
+      --push) push_first=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow pr [--base BRANCH] [--head BRANCH] [--draft] [--push] [--yes] [--dry-run]
+
+Uses Codex to draft a detailed, professional pull request title and body, then
+creates the PR with GitHub CLI. The generated PR text follows the configured
+Humanize Flow i18n language.
+
+Options:
+  --base BRANCH   Base branch for the PR. Defaults to branch gh-merge-base,
+                  origin/HEAD, main, then master.
+  --head BRANCH   Head branch for the PR. Defaults to the current branch.
+  --remote NAME   Remote used by --push.
+  --draft         Create a draft PR.
+  --push          Push the current branch before creating the PR.
+  --yes, -y       Skip confirmation after showing the generated PR draft.
+  --dry-run       Generate and show the draft, but do not create the PR.
+EOF
+        return 0 ;;
+      *) die "Unknown pr option: $1" ;;
+    esac
+    shift
+  done
+
+  command_exists codex || die "codex CLI not found."
+  if [ "$dry_run" -ne 1 ]; then
+    command_exists gh || die "GitHub CLI 'gh' not found."
+  fi
+  branch="$(git branch --show-current)"
+  [ -n "$branch" ] || die "Cannot determine current branch."
+  if [ -z "$head" ]; then head="$branch"; fi
+  if [ -z "$base" ]; then base="$(guess_pr_base)"; fi
+  [ "$head" != "$base" ] || die "Current/head branch '$head' matches base '$base'; create or switch to a feature branch before opening a PR."
+  merge_base="$(git merge-base HEAD "$base" 2>/dev/null || git merge-base HEAD "origin/$base" 2>/dev/null || true)"
+  [ -n "$merge_base" ] || die "Could not determine merge base for $base. Pass --base BRANCH or fetch the base branch."
+  if git diff --quiet "$merge_base"..HEAD && [ -z "$(git log --oneline "$merge_base"..HEAD)" ]; then
+    die "No commits or diff found between $base and HEAD."
+  fi
+
+  if [ "$push_first" -eq 1 ]; then
+    if [ -n "$remote" ]; then cmd_push --remote "$remote"; else cmd_push; fi
+  fi
+
+  run_dir="$(state_dir)/runs/$(timestamp)-pr"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/codex-pr-prompt.md"
+  draft_file="$run_dir/pr-draft.json"
+  title_file="$run_dir/pr-title.txt"
+  body_file="$run_dir/pr-body.md"
+
+  cat > "$prompt_file" <<EOF
+You are drafting a professional GitHub pull request for this repository.
+
+Base branch: $base
+Head branch: $head
+Merge base: $merge_base
+PR title output: $title_file
+PR body output: $body_file
+
+$(language_instruction)
+
+Inspect:
+- git status --short
+- git log --oneline $merge_base..HEAD
+- git log --format=fuller $merge_base..HEAD
+- git diff --stat $merge_base..HEAD
+- git diff $merge_base..HEAD
+- docs/humanize-flow artifacts relevant to this branch, especially request.md, plan.md, acceptance.md, implementation summaries, and review reports.
+- .humanize-flow/handoffs/*.json when relevant.
+- AGENTS.md and CLAUDE.md when present.
+
+Return only JSON with this shape:
+{
+  "title": "concise PR title",
+  "body": "professional Markdown PR body"
+}
+
+PR body requirements:
+- Be detailed enough for a maintainer to review without reconstructing context from scratch.
+- Include sections for summary, why/context, notable changes, verification, risks/rollback, and reviewer notes.
+- Mention Humanize Flow handoff, Beads task ids, plan, acceptance, implementation summary, and review artifact paths when relevant.
+- Use concrete test commands and outcomes when visible. If verification is not visible, say that honestly.
+- Do not invent issue numbers, test results, reviewers, or external facts.
+- Keep machine-readable literals canonical: file paths, commands, labels, JSON keys, APIs, Beads IDs, branch names, and commit hashes.
+- Do not include Markdown fences around the JSON.
+EOF
+
+  info "PR prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  run_codex_exec "$prompt_text" > "$draft_file"
+  sed -i.bak '/^```/d' "$draft_file"
+  rm -f "$draft_file.bak"
+  python3 - "$draft_file" "$title_file" "$body_file" <<'PY'
+import json, re, sys
+from pathlib import Path
+
+draft_path = Path(sys.argv[1])
+title_path = Path(sys.argv[2])
+body_path = Path(sys.argv[3])
+raw = draft_path.read_text(encoding="utf-8").strip()
+try:
+    data = json.loads(raw)
+except Exception:
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        raise SystemExit(f"could not parse Codex PR JSON: {draft_path}")
+    data = json.loads(match.group(0))
+title = str(data.get("title") or "").strip()
+body = str(data.get("body") or "").strip()
+if not title:
+    raise SystemExit("Codex returned an empty PR title")
+if not body:
+    raise SystemExit("Codex returned an empty PR body")
+title_path.write_text(title.splitlines()[0].strip() + "\n", encoding="utf-8")
+body_path.write_text(body.rstrip() + "\n", encoding="utf-8")
+PY
+
+  info "PR title: $title_file"
+  info "PR body: $body_file"
+  log ""
+  printf 'Title: '
+  sed -n '1p' "$title_file"
+  log ""
+  sed -n '1,220p' "$body_file"
+  log ""
+
+  if [ "$dry_run" -eq 1 ]; then
+    info "--dry-run set; PR not created."
+    return 0
+  fi
+  if [ "$yes" -ne 1 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ]; then
+    printf 'Create PR with this title and body? [y/N] '
+    read -r answer
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) die "PR creation cancelled. Draft kept in $run_dir" ;;
+    esac
+  fi
+
+  if [ "$draft" -eq 1 ]; then
+    pr_url="$(gh pr create --base "$base" --head "$head" --title "$(cat "$title_file")" --body-file "$body_file" --draft)"
+  else
+    pr_url="$(gh pr create --base "$base" --head "$head" --title "$(cat "$title_file")" --body-file "$body_file")"
+  fi
+  printf '%s\n' "$pr_url"
+}
+
 cmd_status() {
   require_git_repo
   local hdir
@@ -1877,6 +2101,7 @@ main() {
     review) cmd_review "$@" ;;
     commit) cmd_commit "$@" ;;
     push) cmd_push "$@" ;;
+    pr) cmd_pr "$@" ;;
     status) cmd_status "$@" ;;
     config) cmd_config "$@" ;;
     i18n) cmd_i18n "$@" ;;

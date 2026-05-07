@@ -99,7 +99,7 @@ Or run a specific task:
 humanize-flow run <bd-id>
 ```
 
-The worker reads the Beads task, handoff, plan, and acceptance criteria. It implements exactly one approved task, optionally uses humanize/RLCR for complex work, records test evidence, and asks for review.
+The worker reads the Beads task, approved handoff, plan, and acceptance criteria. Beads text may be intentionally concise; the Markdown artifacts are the detailed execution contract. If the approved handoff, `plan.md`, or `acceptance.md` is missing, the worker should stop instead of implementing from the Beads task alone.
 
 ## 5. Review with Codex
 
@@ -113,6 +113,8 @@ The reviewer checks the implementation against the approved artifacts and return
 - `changes_requested`
 - `blocked`
 
+Missing handoff, plan, or acceptance evidence should produce `blocked`, not `pass`.
+
 ## 6. Iterate or close
 
 If changes are requested, return to the worker with the review findings. If the review passes, close the Beads task according to your project policy.
@@ -122,4 +124,5 @@ For final git handoff, stage the intended files, then run:
 ```bash
 humanize-flow commit
 humanize-flow push
+humanize-flow pr
 ```

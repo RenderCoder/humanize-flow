@@ -16,14 +16,16 @@ All notable changes to humanize-flow will be documented in this file.
 - Add `humanize-flow i18n` and `language` config for workflow artifact language.
 - Add `codex.model` and `codex.reasoning_effort` config for planner, reviewer, and commit Codex runs.
 - Add `humanize-flow run --interactive` for Claude Code interactive worker sessions.
-- Add `humanize-flow commit` for Codex-assisted Lore commit messages over staged changes.
-- Let `humanize-flow commit` ask Codex which changed files to stage when no diff is already staged.
+- Add `humanize-flow commit` for Codex-assisted change selection and Lore commit messages.
+- Let `humanize-flow commit` ask Codex which changed files belong in the commit every time, treating existing staged changes as advisory context instead of the final commit boundary.
 - Capture commit hook failures and optionally create a Beads task for fixing them.
 - Add `humanize-flow push` for current-branch push with remote selection.
+- Add `humanize-flow pr` for Codex-drafted professional GitHub pull requests that follow the configured workflow language.
 
 ### Fixed
 
 - Resolve Humanize Flow handoff slugs in `run` and `review` so review files do not fall back to `docs/humanize-flow/unknown`.
+- Add Humanize Flow artifact links to materialized Beads descriptions and require worker/reviewer flows to use approved Markdown artifacts rather than brief Beads text alone.
 - Make English the default generated artifact language while allowing `zh` for Simplified Chinese workflows.
 - Quote skill `description` frontmatter values so Codex can parse installed `SKILL.md` files.
 - Validate skill frontmatter during project checks to catch invalid installed skill metadata before release.

@@ -168,16 +168,16 @@ Use the actual Beads task id when possible. Handoff slugs are also accepted and 
 
 ## `humanize-flow commit`
 
-Use Codex to draft a Lore commit message and commit the current changes.
+Use Codex to select commit paths, draft a Lore commit message, and commit the selected changes.
 
 ```bash
 humanize-flow commit
 humanize-flow commit --yes
 ```
 
-If no diff is staged, Codex first selects which changed file paths belong in the commit based on `git status`, the diff, and repository guidance such as `AGENTS.md` or `CLAUDE.md`; the CLI stages only those selected paths. If a diff is already staged, it commits only the staged diff and leaves unstaged changes untouched. It writes the selected paths to `.humanize-flow/runs/<timestamp>-commit/stage-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, shows it, and asks before committing unless `--yes` is passed.
+Codex always selects which changed file paths belong in the commit based on `git status`, staged diff, unstaged diff, untracked files, and repository guidance such as `AGENTS.md` or `CLAUDE.md`. Existing staged changes are advisory context only: Codex may include related unstaged paths and exclude accidentally staged paths. The CLI stages the selected paths, writes them to `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, shows the selected diffstat and message, and commits only those selected paths unless the confirmation is rejected. Pass `--yes` to skip the confirmation prompt.
 
-If `git commit` fails because a hook, linter, formatter, typecheck, or test command fails, the command saves the full output to `.humanize-flow/runs/<timestamp>-commit/git-commit.log`. In an interactive terminal, it then asks whether to create a Beads task for fixing the hook failure. Codex drafts the task from the hook output and staged diff; the CLI does not create this task silently.
+If `git commit` fails because a hook, linter, formatter, typecheck, or test command fails, the command saves the full output to `.humanize-flow/runs/<timestamp>-commit/git-commit.log`. In an interactive terminal, it then asks whether to create a Beads task for fixing the hook failure. Codex drafts the task from the hook output and selected diff; the CLI does not create this task silently.
 
 ## `humanize-flow push`
 
@@ -189,6 +189,31 @@ humanize-flow push --remote origin
 ```
 
 If exactly one remote exists, the CLI pushes to it. If multiple remotes exist, it lists them and asks for a number or remote name. In non-interactive mode, pass `--remote`.
+
+## `humanize-flow pr`
+
+Use Codex to draft a professional GitHub pull request and create it with GitHub CLI.
+
+```bash
+humanize-flow pr
+humanize-flow pr --base main --head feature-branch
+humanize-flow pr --draft --push --yes
+humanize-flow pr --dry-run
+```
+
+The command inspects the branch commits, diff, Humanize Flow artifacts, handoffs, implementation summaries, review reports, and repository guidance. It asks Codex for a structured PR draft, writes `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` and `pr-body.md`, shows the draft, then calls `gh pr create --title ... --body-file ...`.
+
+Options:
+
+- `--base <branch>`: base branch. Defaults to branch `gh-merge-base`, `origin/HEAD`, `main`, then `master`.
+- `--head <branch>`: PR head branch. Defaults to the current branch.
+- `--draft`: create a draft PR.
+- `--push`: push the current branch before creating the PR.
+- `--remote <name>`: remote used by `--push`.
+- `--yes`: skip confirmation after showing the generated PR draft.
+- `--dry-run`: generate and show the draft without creating the PR.
+
+The PR title and body follow the configured workflow language from `humanize-flow i18n` or `HUMANIZE_FLOW_LANGUAGE`. File paths, commands, labels, JSON keys, APIs, Beads IDs, branch names, and commit hashes stay canonical.
 
 ## `humanize-flow status`
 
@@ -206,8 +231,8 @@ humanize-flow status
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | Extra arguments for `claude -p`. |
 | `HUMANIZE_FLOW_CLAUDE_MODEL` | Override the configured Claude Code worker model. |
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | Override the configured Claude Code permission mode. |
-| `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit runs. |
-| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit runs. |
+| `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit/pr runs. |
+| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_LANGUAGE` | Override generated artifact language for one command. |
 | `HUMANIZE_FLOW_CODEX_ARGS` | Extra arguments for `codex exec`. |
 | `HUMANIZE_FLOW_BIN_DIR` | Install location for the CLI. |
