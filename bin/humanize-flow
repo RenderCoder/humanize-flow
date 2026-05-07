@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.2.0"
+HF_VERSION="0.3.0"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-opus-4-7"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"

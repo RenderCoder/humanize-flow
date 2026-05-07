@@ -22,5 +22,6 @@ unzip -l humanize-flow.zip | less
 - [ ] CLI 和安装脚本可执行。
 - [ ] 英文和中文文档一一对应。
 - [ ] 不包含 `.git/` 目录。
+- [ ] 不包含 `.omx/`、`.humanize-flow/runs/` 或 `docs/humanize-flow/unknown/` 运行时产物。
 - [ ] 不包含认证文件、API keys 或本地运行日志。
 - [ ] `CHANGELOG.md` 版本正确。

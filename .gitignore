@@ -1,6 +1,7 @@
 # Local runtime state
 .humanize-flow/runs/
 .humanize-flow/tmp/
+docs/humanize-flow/unknown/
 
 # Generated packages
 humanize-flow.zip

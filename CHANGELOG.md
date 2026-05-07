@@ -4,6 +4,8 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.3.0] - 2026-05-07
+
 ### Changed
 
 - Default Humanize Flow planning Markdown artifacts to Simplified Chinese for faster human review while preserving canonical machine-readable literals.
@@ -26,6 +28,7 @@ All notable changes to humanize-flow will be documented in this file.
 
 - Resolve Humanize Flow handoff slugs in `run` and `review` so review files do not fall back to `docs/humanize-flow/unknown`.
 - Add Humanize Flow artifact links to materialized Beads descriptions and require worker/reviewer flows to use approved Markdown artifacts rather than brief Beads text alone.
+- Remove a local fallback review artifact from tracked release files and make release packaging use only git-tracked files.
 - Make English the default generated artifact language while allowing `zh` for Simplified Chinese workflows.
 - Quote skill `description` frontmatter values so Codex can parse installed `SKILL.md` files.
 - Validate skill frontmatter during project checks to catch invalid installed skill metadata before release.
