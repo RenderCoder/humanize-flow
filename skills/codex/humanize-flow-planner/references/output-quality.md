@@ -4,6 +4,7 @@ A humanize-flow plan should be clear enough for another agent to execute later w
 
 ## Quality bar
 
+- Human-review Markdown artifacts follow the requested language policy and default to English.
 - The plan explains what changes and why.
 - The plan lists important alternatives considered when there are tradeoffs.
 - Acceptance criteria are observable and testable.

@@ -2,6 +2,8 @@
 
 A good plan from an existing Beads task should be better than the original task, not just a copy of it.
 
+Human-review Markdown artifacts should follow the requested language policy and default to English. Keep source task identifiers, commands, paths, JSON keys, enum values, APIs, code identifiers, and Beads IDs in their canonical form.
+
 ## `request.md`
 
 Include:

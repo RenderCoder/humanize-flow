@@ -103,7 +103,9 @@ bd show <bd-id> --json
 
 ## `run-next` 行为
 
-`humanize-flow run-next` 会优先选择已批准 handoff 中出现的 ready Beads 任务。这样即使导入任务没有 `humanize-flow` 标签，也可以被选中。如果没有这类任务，它会回退到带 `humanize-flow` 标签的任务，再回退到第一个 ready 任务。
+`humanize-flow run-next` 仍会按优先级排列 ready Beads 任务：先选择已批准 handoff 中出现的任务，再选择带 `humanize-flow` 标签的任务，最后才是其他 ready 任务。当 stdin 是交互式终端且存在多个 ready 任务或 Epic 分组时，它会先询问要运行哪个分组/任务，再启动 Claude Code。
+
+在非交互脚本中，可设置 `HUMANIZE_FLOW_NONINTERACTIVE=1` 使用确定性的回退选择。
 
 ## Review 使用
 

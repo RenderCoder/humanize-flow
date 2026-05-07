@@ -76,11 +76,33 @@ python3 -m json.tool .humanize-flow/handoffs/<slug>.json
 
 ## `run-next` 选错任务
 
-CLI 会先选择已批准 Humanize Flow handoff 中出现的 ready 任务，然后再选择带 `humanize-flow` label 的任务。如果你的 Beads 输出格式不同，可以显式指定任务：
+在交互式终端中，如果存在多个候选任务，`humanize-flow run-next` 会询问要运行哪个 ready Epic/task 分组。如果你的 Beads 输出格式不同，或想完全绕过选择，可以显式指定任务：
 
 ```bash
 humanize-flow run <bd-id>
 ```
+
+脚本中可设置 `HUMANIZE_FLOW_NONINTERACTIVE=1` 使用确定性的回退选择。
+
+## `commit` 在 pre-commit hook 失败
+
+`humanize-flow commit` 会把 hook 输出保存在：
+
+```text
+.humanize-flow/runs/<timestamp>-commit/git-commit.log
+```
+
+当失败看起来来自 hook、lint、format、typecheck 或测试时，交互模式会询问是否创建 Beads 修复任务。这是刻意保留确认的：hook 失败可能是真代码问题，也可能是本地环境问题，比如缺少 `eslint` 命令。
+
+## Review 输出到了 `unknown`
+
+这表示 CLI 没能把传入的 review 参数映射到 Humanize Flow handoff。优先使用 handoff 中的实际 Beads 任务 ID，例如：
+
+```bash
+humanize-flow review rti-tek-miniapp-copy-63g
+```
+
+新版也支持 handoff slug，但旧版已安装 CLI 可能只能解析 Beads ID。
 
 ## humanize 不可用
 

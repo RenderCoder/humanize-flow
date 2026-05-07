@@ -76,7 +76,17 @@ After reviewing the plan:
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
 humanize-flow review <bd-id>
+humanize-flow commit
+humanize-flow push
 ```
+
+Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-opus-4-7`, and permission mode `auto`. Codex planner/reviewer/commit runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
+
+```bash
+humanize-flow run <bd-id> --interactive
+```
+
+After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit when nothing is already staged, stages only those paths, drafts a Lore commit message, then commits after confirmation. If you already staged a partial diff, it commits only that staged diff. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote.
 
 ## Planning from an existing Beads task
 
@@ -108,6 +118,8 @@ humanize-flow review bd-1234
 humanize-flow plan --slug undo-redo --from examples/minimal-feature-request.md
 humanize-flow plan-from-bd bd-1234 --slug undo-redo
 ```
+
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese for planning docs, Beads task text, implementation summaries, review reports, and commit message prose. Machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers stay in their canonical form.
 
 If important ambiguity remains, the planner should write `docs/humanize-flow/<slug>/questions.md` and stop instead of inventing a high-impact decision.
 

@@ -76,11 +76,33 @@ python3 -m json.tool .humanize-flow/handoffs/<slug>.json
 
 ## `run-next` selects the wrong task
 
-The CLI first prefers ready tasks that appear in approved Humanize Flow handoffs, then tasks labeled `humanize-flow`. If your Beads output format differs, use an explicit task id:
+In an interactive terminal, `humanize-flow run-next` asks which ready Epic/task group to run when there are multiple candidates. If your Beads output format differs, or if you want to bypass selection entirely, use an explicit task id:
 
 ```bash
 humanize-flow run <bd-id>
 ```
+
+For scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use deterministic fallback selection.
+
+## `commit` fails in pre-commit hooks
+
+`humanize-flow commit` preserves the hook output under:
+
+```text
+.humanize-flow/runs/<timestamp>-commit/git-commit.log
+```
+
+When the failure looks like a hook, linter, formatter, typecheck, or test failure, interactive runs ask whether to create a Beads task to fix it. This is intentional: hook failures can mean a real code issue, but they can also mean a local environment problem such as a missing `eslint` binary.
+
+## Review output goes under `unknown`
+
+This means the CLI could not map the provided review argument to a Humanize Flow handoff. Prefer the actual Beads task id from the handoff, for example:
+
+```bash
+humanize-flow review rti-tek-miniapp-copy-63g
+```
+
+Newer versions also accept the handoff slug, but older installed CLIs may only resolve Beads ids.
 
 ## humanize is unavailable
 

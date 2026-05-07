@@ -4,8 +4,27 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Default Humanize Flow planning Markdown artifacts to Simplified Chinese for faster human review while preserving canonical machine-readable literals.
+- Default Claude Code worker runs to human-readable detailed progress output backed by raw `stream-json` capture, permission mode `auto`, and model `claude-opus-4-7`.
+- `humanize-flow run-next` now prompts for ready Epic/task selection in interactive terminals instead of immediately running the first ready task.
+
+### Added
+
+- Add `humanize-flow config` for global Claude worker defaults.
+- Add `humanize-flow i18n` and `language` config for workflow artifact language.
+- Add `codex.model` and `codex.reasoning_effort` config for planner, reviewer, and commit Codex runs.
+- Add `humanize-flow run --interactive` for Claude Code interactive worker sessions.
+- Add `humanize-flow commit` for Codex-assisted Lore commit messages over staged changes.
+- Let `humanize-flow commit` ask Codex which changed files to stage when no diff is already staged.
+- Capture commit hook failures and optionally create a Beads task for fixing them.
+- Add `humanize-flow push` for current-branch push with remote selection.
+
 ### Fixed
 
+- Resolve Humanize Flow handoff slugs in `run` and `review` so review files do not fall back to `docs/humanize-flow/unknown`.
+- Make English the default generated artifact language while allowing `zh` for Simplified Chinese workflows.
 - Quote skill `description` frontmatter values so Codex can parse installed `SKILL.md` files.
 - Validate skill frontmatter during project checks to catch invalid installed skill metadata before release.
 

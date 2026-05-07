@@ -31,3 +31,5 @@ Result: `<pass/fail/not run>`
 ```bash
 humanize-flow review <bd-id>
 ```
+
+Use the actual Beads task id, not only the Humanize Flow slug. The slug may work in newer Humanize Flow versions, but the Beads id is the most portable review target.

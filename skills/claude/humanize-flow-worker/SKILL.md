@@ -38,7 +38,7 @@ Your job is to implement exactly one approved Beads task. You are optimized for 
 8. Run relevant tests.
 9. Write implementation summary.
 10. Update Beads notes/status.
-11. Ask for review using `humanize-flow review <task-id>`.
+11. Ask for review using the actual Beads task id: `humanize-flow review <task-id>`. If you also mention the handoff slug, label it as an alternative for newer Humanize Flow versions, not the primary command.
 
 ## Completion summary
 
@@ -48,4 +48,4 @@ End with:
 - acceptance criteria status,
 - tests run,
 - risks or follow-ups,
-- exact review command.
+- exact review command using the actual Beads task id.

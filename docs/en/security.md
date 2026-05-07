@@ -8,6 +8,7 @@ humanize-flow coordinates tools that can read files, write files, and run comman
 - Worker requires an approved handoff.
 - Reviewer does not implement fixes.
 - CLI does not default to full-access sandbox modes.
+- Claude Code worker runs default to permission mode `auto`, not full permission bypass.
 - humanize/RLCR is optional and should not require unsafe permissions by default.
 
 ## Approval gate
@@ -24,7 +25,9 @@ Implementation should not begin until the handoff contains:
 
 Use least privilege. For planning, `codex exec --sandbox workspace-write` is enough to write planning artifacts. For review, read-only behavior is preferred when practical.
 
-For Claude Code, set `HUMANIZE_FLOW_CLAUDE_ARGS` to match your local policy. Avoid dangerous permission bypass modes as defaults.
+For Claude Code, the default worker permission mode is `auto` so approved tasks can proceed without prompting for every file edit. This is intentionally different from `bypassPermissions` or `--dangerously-skip-permissions`, which should remain an explicit local choice only.
+
+Set `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` or `humanize-flow config set claude.permission_mode <mode>` to match your local policy. Avoid dangerous permission bypass modes as defaults.
 
 ## Secrets
 

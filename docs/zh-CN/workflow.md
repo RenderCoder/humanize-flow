@@ -37,6 +37,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
+面向人类的生成产物默认使用英文。使用 `humanize-flow i18n zh` 可把完整链路切换到简体中文。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+
 非交互方式：
 
 ```bash
@@ -114,3 +116,10 @@ Reviewer 会对照批准的产物进行审查，并返回：
 ## 6. 迭代或关闭
 
 如果需要修改，把 review findings 交给 worker 继续修。如果 review 通过，则按项目策略关闭 Beads 任务。
+
+最后交付 git 变更时，先 stage 需要提交的文件，然后运行：
+
+```bash
+humanize-flow commit
+humanize-flow push
+```

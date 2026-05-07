@@ -2,6 +2,8 @@
 
 The planner converts a request into artifacts that both humans and agents can trust.
 
+Write human-review Markdown artifacts in the language requested by the user or CLI prompt. Default to English when no language policy is provided. Keep machine-readable names and technical literals in their canonical form: JSON keys and enum values, Beads labels, file paths, commands, APIs, package names, code identifiers, and Beads IDs.
+
 ## Phase 1: Intake
 
 Capture the user's request in `docs/humanize-flow/<slug>/request.md`.

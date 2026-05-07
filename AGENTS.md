@@ -19,6 +19,7 @@ The CLI `bin/humanize-flow` is the deterministic orchestrator. Skills define rol
 
 - English is the primary language for implementation, public README content, skills, schemas, scripts, and issue templates.
 - Simplified Chinese documentation is included by default for the project owner and Chinese-speaking users.
+- Human-facing generated artifacts default to English unless the user or Humanize Flow `language`/`i18n` config requests another language. This includes planning docs, Beads task text, implementation summaries, review reports, and commit message prose. Keep machine-readable JSON field names, enum values, labels, paths, commands, API names, code identifiers, and Beads IDs in their canonical form.
 - When adding or changing any user-facing documentation, update both versions in the same change:
   - `README.md` and `README.zh-CN.md`
   - `docs/en/<topic>.md` and `docs/zh-CN/<topic>.md`

@@ -103,7 +103,9 @@ It should not silently expand scope. Discovered work should become a new Beads i
 
 ## `run-next` behavior
 
-`humanize-flow run-next` prefers ready Beads tasks that appear in approved handoffs. This lets imported tasks work even if they do not have a `humanize-flow` label. If no approved handoff task is ready, it falls back to tasks labeled `humanize-flow`, then to the first ready task.
+`humanize-flow run-next` still ranks ready Beads tasks by approved handoff membership first, `humanize-flow` labels second, and other ready tasks last. When stdin is interactive and multiple ready tasks or Epic groups exist, it asks which group/task to run before starting Claude Code.
+
+In non-interactive scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use the deterministic fallback selection.
 
 ## Review usage
 

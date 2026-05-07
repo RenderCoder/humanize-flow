@@ -33,5 +33,5 @@ In `claude -p` mode, slash-invoked skills may not be available. If you cannot in
 1. implement from the approved plan,
 2. run tests,
 3. write a summary,
-4. request `humanize-flow review <bd-id>`,
+4. request `humanize-flow review <bd-id>` using the actual Beads task id,
 5. fix only review blockers.

@@ -22,6 +22,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
+Human-review Markdown output follows the configured workflow language and defaults to English. Machine-readable literals such as JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers remain canonical.
+
 ## `humanize-flow-bd-planner`
 
 Codex skill for **existing-Beads-task planning**.
@@ -50,6 +52,8 @@ docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
+
+Human-review Markdown output follows the configured workflow language and defaults to English. Source task IDs and machine-readable literals remain canonical.
 
 Important handoff fields:
 
@@ -86,6 +90,8 @@ Interactive invocation:
 ```
 
 The CLI also passes the worker skill instructions through `claude -p`, because non-interactive slash invocation may not be available in every Claude Code context.
+
+By default, CLI worker runs use Claude Code `stream-json` internally with hook events and partial message chunks, then render a human-readable progress log in the terminal. The raw event stream is still saved as `claude-final.jsonl`. Use `humanize-flow run <bd-id> --interactive` when you want a full Claude Code interactive session.
 
 ## `humanize-flow-reviewer`
 

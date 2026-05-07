@@ -4,6 +4,11 @@ IFS=$'\n\t'
 
 HF_VERSION="0.2.0"
 HF_NAME="humanize-flow"
+HF_DEFAULT_CLAUDE_MODEL="claude-opus-4-7"
+HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"
+HF_DEFAULT_LANGUAGE="en"
+HF_DEFAULT_CODEX_MODEL=""
+HF_DEFAULT_CODEX_REASONING_EFFORT=""
 
 log() { printf '%s\n' "$*"; }
 info() { printf '[humanize-flow] %s\n' "$*"; }
@@ -31,14 +36,27 @@ Commands:
   approve SLUG [--materialize-bd]
                                Mark a handoff as approved; optionally create Beads tasks from it.
   materialize-bd SLUG          Create Beads epic/tasks from an approved handoff manifest.
-  run BD_ID                    Run Claude Code worker for one Beads task.
-  run-next                     Pick the next approved/imported or humanize-flow Beads task from 'bd ready --json' and run it.
-  review BD_ID                 Run Codex reviewer for one Beads task.
+  run BD_ID_OR_SLUG [options]  Run Claude Code worker for one Beads task.
+  run-next                     Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
+  review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
+  commit [--yes]               Use Codex to write a Lore commit message and commit staged changes.
+  push [--remote NAME]         Push the current branch, prompting for a remote when needed.
+  i18n [LANG]                  Show or set artifact language (en, zh).
   status                       Show handoff and Beads queue status.
+  config get KEY               Show resolved config value.
+  config set KEY VALUE         Set a global config value.
+  config show                  Show resolved Humanize Flow config.
 
 Environment:
   HUMANIZE_FLOW_HOME           Distribution root. Default: ~/.local/share/humanize-flow when installed.
   HUMANIZE_FLOW_CLAUDE_ARGS    Extra Claude CLI args. Default: empty.
+  HUMANIZE_FLOW_CLAUDE_MODEL   Override Claude Code model for worker runs.
+  HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE
+                               Override Claude Code permission mode for worker runs.
+  HUMANIZE_FLOW_CODEX_MODEL    Override Codex model for planner/review/commit runs.
+  HUMANIZE_FLOW_CODEX_REASONING_EFFORT
+                               Override Codex reasoning effort for planner/review/commit runs.
+  HUMANIZE_FLOW_LANGUAGE       Override artifact language for one command.
   HUMANIZE_FLOW_CODEX_ARGS     Extra Codex exec args. Default: empty.
   HUMANIZE_FLOW_NONINTERACTIVE Set to 1 to avoid interactive prompts in scripts.
 
@@ -47,9 +65,12 @@ Examples:
   humanize-flow init --with-bd
   humanize-flow plan --slug undo-redo --from docs/request.md
   humanize-flow plan-from-bd bd-1234 --slug undo-redo
+  humanize-flow i18n zh
   humanize-flow approve undo-redo --materialize-bd
   humanize-flow run-next
   humanize-flow review bd-a1b2
+  humanize-flow commit
+  humanize-flow push
 EOF
 }
 
@@ -80,6 +101,7 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 state_dir() { printf '%s/.humanize-flow\n' "$(repo_root)"; }
 docs_dir() { printf '%s/docs/humanize-flow\n' "$(repo_root)"; }
 handoff_path() { printf '%s/handoffs/%s.json\n' "$(state_dir)" "$1"; }
+user_config_path() { printf '%s/humanize-flow/config.json\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
 
 slugify() {
   python3 - "$@" <<'PY'
@@ -93,6 +115,388 @@ PY
 planner_skill_hint() { printf '%s\n' '$humanize-flow-planner'; }
 bd_planner_skill_hint() { printf '%s\n' '$humanize-flow-bd-planner'; }
 reviewer_skill_hint() { printf '%s\n' '$humanize-flow-reviewer'; }
+
+json_get() {
+  local file key default
+  file="$1"; key="$2"; default="$3"
+  python3 - "$file" "$key" "$default" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+key = sys.argv[2]
+default = sys.argv[3]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    print(default)
+    raise SystemExit(0)
+value = data
+for part in key.split('.'):
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        print(default)
+        raise SystemExit(0)
+if isinstance(value, bool):
+    print('true' if value else 'false')
+elif value is None:
+    print(default)
+else:
+    print(value)
+PY
+}
+
+json_set() {
+  local file key value
+  file="$1"; key="$2"; value="$3"
+  mkdir -p "$(dirname "$file")"
+  python3 - "$file" "$key" "$value" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+cursor = data
+parts = key.split('.')
+for part in parts[:-1]:
+    next_value = cursor.get(part)
+    if not isinstance(next_value, dict):
+        next_value = {}
+        cursor[part] = next_value
+    cursor = next_value
+cursor[parts[-1]] = value
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+PY
+}
+
+config_get_raw() {
+  local key default value
+  key="$1"; default="$2"
+  value="$default"
+  if [ -f "$(user_config_path)" ]; then
+    value="$(json_get "$(user_config_path)" "$key" "$value")"
+  fi
+  if [ -f "$(state_dir)/config.json" ]; then
+    value="$(json_get "$(state_dir)/config.json" "$key" "$value")"
+  fi
+  printf '%s\n' "$value"
+}
+
+config_get() {
+  local key default env_name
+  key="$1"; default="$2"; env_name="${3:-}"
+  if [ -n "$env_name" ]; then
+    eval "if [ -n \"\${$env_name:-}\" ]; then printf '%s\n' \"\${$env_name}\"; return 0; fi"
+  fi
+  config_get_raw "$key" "$default"
+}
+
+claude_model_default() {
+  config_get "claude.model" "$HF_DEFAULT_CLAUDE_MODEL" "HUMANIZE_FLOW_CLAUDE_MODEL"
+}
+
+claude_permission_mode_default() {
+  config_get "claude.permission_mode" "$HF_DEFAULT_CLAUDE_PERMISSION_MODE" "HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE"
+}
+
+codex_model_default() {
+  config_get "codex.model" "$HF_DEFAULT_CODEX_MODEL" "HUMANIZE_FLOW_CODEX_MODEL"
+}
+
+codex_reasoning_effort_default() {
+  config_get "codex.reasoning_effort" "$HF_DEFAULT_CODEX_REASONING_EFFORT" "HUMANIZE_FLOW_CODEX_REASONING_EFFORT"
+}
+
+normalize_reasoning_effort() {
+  case "$1" in
+    ""|low|medium|high|xhigh) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+display_optional_config() {
+  local value fallback
+  value="$1"; fallback="$2"
+  if [ -n "$value" ]; then printf '%s\n' "$value"; else printf '%s\n' "$fallback"; fi
+}
+
+language_name() {
+  case "$1" in
+    zh|zh-CN|zh_CN) printf 'Simplified Chinese\n' ;;
+    en|en-US|en_US) printf 'English\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+normalize_language() {
+  case "$1" in
+    zh|zh-CN|zh_CN) printf 'zh\n' ;;
+    en|en-US|en_US) printf 'en\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+language_default() {
+  local raw normalized
+  raw="$(config_get "language" "$HF_DEFAULT_LANGUAGE" "HUMANIZE_FLOW_LANGUAGE")"
+  normalized="$(normalize_language "$raw")" || die "Unsupported language: $raw (supported: en, zh)"
+  printf '%s\n' "$normalized"
+}
+
+language_instruction() {
+  local lang name
+  lang="$(language_default)"
+  name="$(language_name "$lang")"
+  cat <<EOF
+Language policy:
+- Write human-facing generated artifacts in $name (language code: $lang), unless the user explicitly requests a different language in this run.
+- This applies to request docs, plans, acceptance criteria, Beads task titles/descriptions, implementation summaries, review reports, and commit message prose.
+- Keep machine-readable literals in canonical form: JSON keys, enum values, labels, file paths, commands, API names, package names, code identifiers, and Beads IDs.
+EOF
+}
+
+run_codex_exec() {
+  local sandbox="" prompt model reasoning
+  local args
+  if [ "${1:-}" = "--sandbox" ]; then
+    sandbox="${2:-}"
+    shift 2
+  fi
+  prompt="${1:-}"
+  model="$(codex_model_default)"
+  reasoning="$(codex_reasoning_effort_default)"
+  reasoning="$(normalize_reasoning_effort "$reasoning")" || die "Unsupported Codex reasoning effort: $reasoning (supported: low, medium, high, xhigh)"
+
+  args=(exec)
+  if [ -n "$sandbox" ]; then args+=(--sandbox "$sandbox"); fi
+  if [ -n "$model" ]; then args+=(--model "$model"); fi
+  if [ -n "$reasoning" ]; then args+=(-c "model_reasoning_effort=\"$reasoning\""); fi
+
+  if [ -n "${HUMANIZE_FLOW_CODEX_ARGS:-}" ]; then
+    # shellcheck disable=SC2206
+    # shellcheck disable=SC2086
+    codex "${args[@]}" ${HUMANIZE_FLOW_CODEX_ARGS} "$prompt"
+  else
+    codex "${args[@]}" "$prompt"
+  fi
+}
+
+format_claude_stream_json() {
+  python3 -c "$(cat <<'PY'
+import json
+import sys
+
+def text_from_content(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get('type') == 'text' and item.get('text'):
+                    parts.append(str(item['text']))
+                elif item.get('text'):
+                    parts.append(str(item['text']))
+            elif isinstance(item, str):
+                parts.append(item)
+        return ''.join(parts)
+    return ''
+
+def tool_name(block):
+    if not isinstance(block, dict):
+        return ''
+    return block.get('name') or block.get('tool_name') or block.get('type') or ''
+
+seen_partial = ''
+for raw in sys.stdin:
+    line = raw.rstrip('\n')
+    if not line:
+        continue
+    try:
+        event = json.loads(line)
+    except Exception:
+        print(line, flush=True)
+        continue
+
+    event_type = event.get('type') or event.get('event') or ''
+    subtype = event.get('subtype') or ''
+
+    if event_type == 'system':
+        if subtype:
+            print(f'[system] {subtype}', flush=True)
+        continue
+
+    if event_type in {'assistant', 'user'}:
+        message = event.get('message') or event
+        content = message.get('content')
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get('type') or ''
+                if btype == 'text':
+                    text = block.get('text') or ''
+                    if text:
+                        print(text, flush=True)
+                elif btype == 'tool_use':
+                    name = tool_name(block)
+                    tool_id = block.get('id') or ''
+                    suffix = f' {tool_id}' if tool_id else ''
+                    print(f'[tool] {name}{suffix}', flush=True)
+                elif btype == 'tool_result':
+                    tool_id = block.get('tool_use_id') or ''
+                    status = 'error' if block.get('is_error') else 'ok'
+                    prefix = f'[tool-result] {tool_id} {status}'.strip()
+                    result_text = text_from_content(block.get('content'))
+                    print(prefix, flush=True)
+                    if result_text:
+                        print(result_text, flush=True)
+        else:
+            text = text_from_content(content)
+            if text:
+                print(text, flush=True)
+        continue
+
+    if event_type in {'content_block_start', 'content_block_delta', 'content_block_stop'}:
+        block = event.get('content_block') or {}
+        delta = event.get('delta') or {}
+        if event_type == 'content_block_start':
+            if isinstance(block, dict) and block.get('type') == 'tool_use':
+                print(f'[tool] {tool_name(block)}', flush=True)
+            continue
+        text = delta.get('text') or delta.get('partial_json') or ''
+        if text and text != seen_partial:
+            print(text, end='' if delta.get('text') else '\n', flush=True)
+            seen_partial = text
+        if event_type == 'content_block_stop':
+            seen_partial = ''
+        continue
+
+    if event_type in {'hook', 'hook_event'} or subtype.endswith('_hook'):
+        name = event.get('hook_name') or event.get('name') or subtype or 'hook'
+        print(f'[hook] {name}', flush=True)
+        continue
+
+    if event_type == 'result':
+        status = subtype or event.get('status') or 'done'
+        print(f'\n[result] {status}', flush=True)
+        result = event.get('result')
+        if isinstance(result, str) and result:
+            print(result, flush=True)
+        cost = event.get('total_cost_usd')
+        duration = event.get('duration_ms')
+        if cost is not None or duration is not None:
+            bits = []
+            if duration is not None:
+                bits.append(f'duration_ms={duration}')
+            if cost is not None:
+                bits.append(f'cost_usd={cost}')
+            print('[usage] ' + ' '.join(bits), flush=True)
+        continue
+
+    label = event_type or subtype or 'event'
+    print(f'[{label}] {json.dumps(event, ensure_ascii=False)}', flush=True)
+PY
+)"
+}
+
+cmd_config() {
+  local sub key value normalized file
+  sub="${1:-show}"
+  if [ $# -gt 0 ]; then shift; fi
+  file="$(user_config_path)"
+  case "$sub" in
+    show)
+      cat <<EOF
+user_config: $file
+language: $(language_default)
+claude.model: $(claude_model_default)
+claude.permission_mode: $(claude_permission_mode_default)
+codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
+codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
+EOF
+      ;;
+    get)
+      key="${1:-}"; [ -n "$key" ] || die "Usage: humanize-flow config get KEY"
+      case "$key" in
+        language) language_default ;;
+        claude.model) claude_model_default ;;
+        claude.permission_mode) claude_permission_mode_default ;;
+        codex.model) codex_model_default ;;
+        codex.reasoning_effort) codex_reasoning_effort_default ;;
+        *) config_get_raw "$key" "" ;;
+      esac
+      ;;
+    set)
+      key="${1:-}"; value="${2:-}"
+      [ -n "$key" ] && [ -n "$value" ] || die "Usage: humanize-flow config set KEY VALUE"
+      case "$key" in
+        language)
+          normalized="$(normalize_language "$value")" || die "Unsupported language: $value (supported: en, zh)"
+          value="$normalized"
+          ;;
+        codex.reasoning_effort)
+          normalized="$(normalize_reasoning_effort "$value")" || die "Unsupported Codex reasoning effort: $value (supported: low, medium, high, xhigh)"
+          value="$normalized"
+          ;;
+        claude.model|claude.permission_mode|codex.model) ;;
+        *) die "Unsupported config key: $key" ;;
+      esac
+      json_set "$file" "$key" "$value"
+      info "set $key=$value in $file"
+      ;;
+    --help|-h|help)
+      cat <<'EOF'
+Usage:
+  humanize-flow config show
+  humanize-flow config get language
+  humanize-flow config set language zh
+  humanize-flow config get claude.model
+  humanize-flow config set claude.model claude-opus-4-7
+  humanize-flow config set claude.permission_mode auto
+  humanize-flow config get codex.model
+  humanize-flow config set codex.model gpt-5.5
+  humanize-flow config get codex.reasoning_effort
+  humanize-flow config set codex.reasoning_effort high
+EOF
+      ;;
+    *) die "Unknown config command: $sub" ;;
+  esac
+}
+
+cmd_i18n() {
+  local lang
+  lang="${1:-}"
+  case "$lang" in
+    "")
+      printf '%s\n' "$(language_default)"
+      ;;
+    --help|-h|help)
+      cat <<'EOF'
+Usage:
+  humanize-flow i18n
+  humanize-flow i18n en
+  humanize-flow i18n zh
+
+Sets the global language for human-facing generated artifacts.
+EOF
+      ;;
+    en|zh|zh-CN|zh_CN|en-US|en_US)
+      lang="$(normalize_language "$lang")"
+      json_set "$(user_config_path)" "language" "$lang"
+      info "set language=$lang in $(user_config_path)"
+      ;;
+    *)
+      die "Unsupported language: $lang (supported: en, zh)"
+      ;;
+  esac
+}
 
 worker_skill_file() {
   local p
@@ -112,6 +516,12 @@ dist_root: $DIST_ROOT
 repo_root: $(repo_root)
 state_dir: $(state_dir)
 docs_dir: $(docs_dir)
+user_config: $(user_config_path)
+language: $(language_default)
+claude.model: $(claude_model_default)
+claude.permission_mode: $(claude_permission_mode_default)
+codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
+codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
 codex_user_skills_dir: $HOME/.agents/skills
 claude_user_skills_dir: ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills
 EOF
@@ -121,6 +531,11 @@ cmd_doctor() {
   local failures=0
   info "version: $HF_VERSION"
   info "dist root: $DIST_ROOT"
+  info "language: $(language_default)"
+  info "claude model: $(claude_model_default)"
+  info "claude permission mode: $(claude_permission_mode_default)"
+  info "codex model: $(display_optional_config "$(codex_model_default)" "(codex default)")"
+  info "codex reasoning effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")"
 
   for bin in git python3 codex claude bd jq; do
     if command_exists "$bin"; then
@@ -202,6 +617,7 @@ EOF
 {
   "schema_version": "1",
   "created_at": "$(iso_now)",
+  "language": "$(language_default)",
   "default_docs_dir": "docs/humanize-flow",
   "default_state_dir": ".humanize-flow",
   "humanize_preferred": true
@@ -307,6 +723,8 @@ Required state dir: $(state_dir)
 Required docs dir: $(docs_dir)
 Required handoff path: $(handoff_path "$slug")
 
+$(language_instruction)
+
 Follow the humanize-flow-planner skill exactly:
 - First understand the request and repository context.
 - If important ambiguity remains and this is an interactive session, discuss it with the user before finalizing.
@@ -322,7 +740,7 @@ EOF
   command_exists codex || die "codex CLI not found."
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
-  codex exec --sandbox "$sandbox" ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$final_file"
+  run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$final_file"
 }
 
 extract_bd_slug_seed() {
@@ -425,6 +843,8 @@ Required state dir: $(state_dir)
 Required docs dir: $(docs_dir)
 Required handoff path: $(handoff_path "$slug")
 
+$(language_instruction)
+
 Follow the humanize-flow-bd-planner skill exactly:
 - Read and understand the existing Beads task. Do not ask the user to repeat information already in bd.
 - If important ambiguity remains and this is an interactive session, discuss it with the user before finalizing.
@@ -445,7 +865,7 @@ EOF
   command_exists codex || die "codex CLI not found."
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
-  codex exec --sandbox "$sandbox" ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$final_file"
+  run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$final_file"
 }
 
 cmd_approve() {
@@ -613,18 +1033,141 @@ raise SystemExit(1)
 PY
 }
 
+find_handoff_for_ref() {
+  local ref
+  ref="$1"
+  python3 - "$(state_dir)/handoffs" "$ref" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+target = sys.argv[2]
+direct = root / f'{target}.json'
+if direct.exists():
+    try:
+        data = json.loads(direct.read_text(encoding='utf-8'))
+    except Exception:
+        data = {}
+    print(data.get('slug') or direct.stem)
+    raise SystemExit(0)
+
+for path in sorted(root.glob('*.json')):
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        continue
+    if target in {data.get('slug'), path.stem}:
+        print(data.get('slug') or path.stem)
+        raise SystemExit(0)
+    ids = []
+    source = data.get('source', {})
+    if isinstance(source, dict):
+        if source.get('bd_id'):
+            ids.append(source.get('bd_id'))
+        ids.extend(source.get('bd_ids') or [])
+    execution = data.get('execution', {})
+    if isinstance(execution, dict) and execution.get('current_bd_id'):
+        ids.append(execution.get('current_bd_id'))
+    epic = data.get('bd', {}).get('epic', {})
+    if isinstance(epic, dict) and epic.get('bd_id'):
+        ids.append(epic.get('bd_id'))
+    for task in data.get('bd', {}).get('tasks', []):
+        if isinstance(task, dict) and task.get('bd_id'):
+            ids.append(task.get('bd_id'))
+    if target in ids:
+        print(data.get('slug') or path.stem)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+default_bd_id_for_slug() {
+  local slug
+  slug="$1"
+  python3 - "$(handoff_path "$slug")" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+execution = data.get('execution') or {}
+if isinstance(execution, dict) and execution.get('current_bd_id'):
+    print(execution['current_bd_id'])
+    raise SystemExit(0)
+source = data.get('source') or {}
+if isinstance(source, dict) and source.get('bd_id'):
+    print(source['bd_id'])
+    raise SystemExit(0)
+bd = data.get('bd') or {}
+epic = bd.get('epic') or {}
+if isinstance(epic, dict) and epic.get('bd_id'):
+    print(epic['bd_id'])
+    raise SystemExit(0)
+for task in bd.get('tasks') or []:
+    if isinstance(task, dict) and task.get('bd_id'):
+        print(task['bd_id'])
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 cmd_run() {
   require_git_repo
-  local bd_id slug file run_dir prompt_file final_file skill_file skill_text prompt_text claude_args
-  bd_id="${1:-}"; [ -n "$bd_id" ] || die "Usage: humanize-flow run BD_ID"
+  local ref bd_id slug file run_dir prompt_file final_file raw_file skill_file skill_text prompt_text claude_args mode model permission_mode output_format verbose partial hook_events
+  ref=""; bd_id=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --interactive|-i) mode="interactive" ;;
+      --model) shift; model="${1:-}" ;;
+      --permission-mode) shift; permission_mode="${1:-}" ;;
+      --text) output_format="text"; partial=0; hook_events=0 ;;
+      --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
+      --no-partial) partial=0 ;;
+      --no-hook-events) hook_events=0 ;;
+      --no-verbose) verbose=0 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow run BD_ID_OR_SLUG [options]
+
+BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
+
+Options:
+  --interactive, -i          Open a Claude Code interactive session instead of print mode.
+  --model MODEL              Override the configured Claude model for this run.
+  --permission-mode MODE     Override the configured Claude permission mode for this run.
+  --text                     Use Claude text output instead of detailed stream-json.
+  --stream-json              Use detailed stream-json internally and show a human-readable progress log. This is the default.
+  --no-partial               Do not include partial message chunks in stream-json output.
+  --no-hook-events           Do not include hook lifecycle events in stream-json output.
+  --no-verbose               Do not pass --verbose to Claude Code.
+EOF
+        return 0 ;;
+      --*) die "Unknown run option: $1" ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected run argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+  [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
+  [ -n "$model" ] || die "Claude model cannot be empty."
+  [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
   command_exists claude || die "claude CLI not found."
   command_exists bd || warn "bd CLI not found; worker prompt will still reference task id."
-  slug="$(find_slug_for_bd_id "$bd_id" 2>/dev/null || true)"
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then
+    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
+  fi
+  if [ -z "$bd_id" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
   run_dir="$(state_dir)/runs/$(timestamp)-run-$bd_id"
   mkdir -p "$run_dir"
   prompt_file="$run_dir/claude-worker-prompt.md"
   final_file="$run_dir/claude-final.md"
+  raw_file="$run_dir/claude-final.jsonl"
   skill_file="$(worker_skill_file || true)"
 
   if [ -n "$skill_file" ]; then skill_text="$(cat "$skill_file")"; else skill_text=""; fi
@@ -636,6 +1179,8 @@ Task id: $bd_id
 Handoff slug: ${slug:-unknown}
 Handoff path: ${file:-not-found}
 Repository root: $(repo_root)
+
+$(language_instruction)
 
 Embedded worker skill instructions follow. Treat them as authoritative for this run.
 
@@ -653,13 +1198,66 @@ Required behavior:
 - Write an implementation summary under docs/humanize-flow/<slug>/implementation/ when a slug is known.
 - Update Beads notes/status with what changed, tests run, and remaining risks.
 - Stop with a clear summary and request Codex review via: humanize-flow review $bd_id
+- Use the actual Beads task id in the review command. If you mention the handoff slug (${slug:-unknown}), present it only as an alternative supported by newer humanize-flow versions.
 EOF
 
   info "worker prompt: $prompt_file"
   prompt_text="$(cat "$prompt_file")"
   claude_args="${HUMANIZE_FLOW_CLAUDE_ARGS:-}"
-  # shellcheck disable=SC2086
-  claude -p "$prompt_text" $claude_args | tee "$final_file"
+  if [ "$mode" = "interactive" ]; then
+    info "starting Claude Code interactive worker session"
+    info "model: $model"
+    info "permission mode: $permission_mode"
+    info "final output is not captured in print-mode log for interactive sessions"
+    # shellcheck disable=SC2086
+    claude --model "$model" --permission-mode "$permission_mode" $claude_args "$prompt_text"
+  else
+    info "starting Claude Code print worker session"
+    info "model: $model"
+    info "permission mode: $permission_mode"
+    info "output format: $output_format"
+    if [ "$output_format" = "stream-json" ]; then
+      info "human-readable log: $final_file"
+      info "raw stream log: $raw_file"
+      if [ "$verbose" -eq 1 ]; then
+        if [ "$partial" -eq 1 ] && [ "$hook_events" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-partial-messages --include-hook-events --verbose $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        elif [ "$partial" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-partial-messages --verbose $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        elif [ "$hook_events" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-hook-events --verbose $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        else
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --verbose $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        fi
+      else
+        if [ "$partial" -eq 1 ] && [ "$hook_events" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-partial-messages --include-hook-events $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        elif [ "$partial" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-partial-messages $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        elif [ "$hook_events" -eq 1 ]; then
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json --include-hook-events $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        else
+          # shellcheck disable=SC2086
+          claude -p --model "$model" --permission-mode "$permission_mode" --output-format stream-json $claude_args "$prompt_text" | tee "$raw_file" | format_claude_stream_json | tee "$final_file"
+        fi
+      fi
+    else
+      if [ "$verbose" -eq 1 ]; then
+        # shellcheck disable=SC2086
+        claude -p --model "$model" --permission-mode "$permission_mode" --output-format text --verbose $claude_args "$prompt_text" | tee "$final_file"
+      else
+        # shellcheck disable=SC2086
+        claude -p --model "$model" --permission-mode "$permission_mode" --output-format text $claude_args "$prompt_text" | tee "$final_file"
+      fi
+    fi
+  fi
 }
 
 cmd_run_next() {
@@ -669,11 +1267,12 @@ cmd_run_next() {
   tmp="$(state_dir)/tmp/bd-ready-$(timestamp).json"
   mkdir -p "$(dirname "$tmp")"
   bd ready --json > "$tmp"
-  bd_id="$(python3 - "$tmp" "$(state_dir)/handoffs" <<'PY'
+  bd_id="$(python3 - "$tmp" "$(state_dir)/handoffs" "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" <<'PY'
 import json, sys
 from pathlib import Path
 ready_path = Path(sys.argv[1])
 handoffs_dir = Path(sys.argv[2])
+noninteractive = sys.argv[3] == '1'
 try:
     data = json.loads(ready_path.read_text())
 except Exception:
@@ -697,6 +1296,29 @@ def item_id(item):
         if isinstance(v, str) and v:
             return v
     return None
+
+def item_title(item):
+    for key in ('title', 'summary', 'name'):
+        v = item.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return '(untitled)'
+
+def item_type(item):
+    v = item.get('type') or item.get('issue_type') or ''
+    return v if isinstance(v, str) else ''
+
+def parent_id(item):
+    for key in ('parent_id', 'parent', 'epic_id', 'epic'):
+        v = item.get(key)
+        if isinstance(v, str) and v:
+            return v
+        if isinstance(v, dict):
+            for nested in ('id', 'issue_id', 'bead_id'):
+                nv = v.get(nested)
+                if isinstance(nv, str) and nv:
+                    return nv
+    return ''
 
 approved_ids = set()
 if handoffs_dir.exists():
@@ -725,24 +1347,89 @@ if handoffs_dir.exists():
                 approved_ids.add(task['bd_id'])
 
 chosen = None
-for item in items:
-    if isinstance(item, dict):
-        iid = item_id(item)
-        if iid and iid in approved_ids:
-            chosen = iid
-            break
-if not chosen:
-    for item in items:
-        if isinstance(item, dict) and 'humanize-flow' in labels_of(item):
-            chosen = item_id(item)
-            if chosen:
+ready = [item for item in items if isinstance(item, dict) and item_id(item)]
+
+def priority(item):
+    iid = item_id(item)
+    labels = labels_of(item)
+    if iid in approved_ids:
+        return 0
+    if 'humanize-flow' in labels:
+        return 1
+    return 2
+
+ready = sorted(ready, key=lambda item: (priority(item), parent_id(item), item_id(item) or ''))
+if ready and (noninteractive or not sys.stdin.isatty() or len(ready) == 1):
+    chosen = item_id(ready[0])
+elif ready:
+    groups = {}
+    order = []
+    for item in ready:
+        group = parent_id(item) or item_id(item)
+        if group not in groups:
+            groups[group] = []
+            order.append(group)
+        groups[group].append(item)
+    if len(order) > 1:
+        print('Ready Epic/task groups:', file=sys.stderr)
+        for idx, group in enumerate(order, 1):
+            group_items = groups[group]
+            first = group_items[0]
+            print(f'  {idx}. {group} ({len(group_items)} ready) - {item_title(first)}', file=sys.stderr)
+        while True:
+            answer = input('Select Epic/task group number, Beads task id, or q to cancel: ').strip()
+            if answer.lower() in {'q', 'quit', 'cancel'}:
+                raise SystemExit(2)
+            selected_group = ''
+            if answer.isdigit() and 1 <= int(answer) <= len(order):
+                selected_group = order[int(answer) - 1]
+            elif answer in groups:
+                selected_group = answer
+            else:
+                for group, group_items in groups.items():
+                    if any(item_id(item) == answer for item in group_items):
+                        selected_group = group
+                        chosen = answer
+                        break
+            if selected_group:
+                group_items = groups[selected_group]
+                if not chosen:
+                    if len(group_items) == 1:
+                        chosen = item_id(group_items[0])
+                    else:
+                        print(f'Ready tasks in {selected_group}:', file=sys.stderr)
+                        for idx, item in enumerate(group_items, 1):
+                            print(f'  {idx}. {item_id(item)} [{item_type(item) or "task"}] {item_title(item)}', file=sys.stderr)
+                        while True:
+                            task_answer = input('Select task number or Beads task id: ').strip()
+                            if task_answer.isdigit() and 1 <= int(task_answer) <= len(group_items):
+                                chosen = item_id(group_items[int(task_answer) - 1])
+                                break
+                            if any(item_id(item) == task_answer for item in group_items):
+                                chosen = task_answer
+                                break
+                            print('Invalid selection.', file=sys.stderr)
                 break
-if not chosen:
-    for item in items:
-        if isinstance(item, dict):
-            chosen = item_id(item)
-            if chosen:
-                break
+            print('Invalid selection.', file=sys.stderr)
+    else:
+        group_items = groups[order[0]]
+        if len(group_items) == 1:
+            chosen = item_id(group_items[0])
+        else:
+            print('Ready tasks:', file=sys.stderr)
+            for idx, item in enumerate(group_items, 1):
+                print(f'  {idx}. {item_id(item)} [{item_type(item) or "task"}] {item_title(item)}', file=sys.stderr)
+            while True:
+                answer = input('Select task number, Beads task id, or q to cancel: ').strip()
+                if answer.lower() in {'q', 'quit', 'cancel'}:
+                    raise SystemExit(2)
+                if answer.isdigit() and 1 <= int(answer) <= len(group_items):
+                    chosen = item_id(group_items[int(answer) - 1])
+                    break
+                if any(item_id(item) == answer for item in group_items):
+                    chosen = answer
+                    break
+                print('Invalid selection.', file=sys.stderr)
 if chosen:
     print(chosen)
 PY
@@ -754,18 +1441,32 @@ PY
 
 cmd_review() {
   require_git_repo
-  local bd_id slug file run_dir prompt_file review_dir review_file base prompt_text
-  bd_id="${1:-}"; [ -n "$bd_id" ] || die "Usage: humanize-flow review BD_ID"
+  local ref bd_id slug file run_dir prompt_file review_dir review_file base prompt_text
+  case "${1:-}" in
+    --help|-h|help)
+      cat <<'EOF'
+Usage:
+  humanize-flow review BD_ID_OR_SLUG
+
+BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
+EOF
+      return 0 ;;
+  esac
+  ref="${1:-}"; [ -n "$ref" ] || die "Usage: humanize-flow review BD_ID_OR_SLUG"
   command_exists codex || die "codex CLI not found."
-  slug="$(find_slug_for_bd_id "$bd_id" 2>/dev/null || true)"
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then
+    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
+  fi
+  if [ -z "${bd_id:-}" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
-  run_dir="$(state_dir)/runs/$(timestamp)-review-$bd_id"
+  run_dir="$(state_dir)/runs/$(timestamp)-review-$ref"
   mkdir -p "$run_dir"
   prompt_file="$run_dir/codex-reviewer-prompt.md"
   review_dir="$(docs_dir)/${slug:-unknown}/reviews"
   mkdir -p "$review_dir"
-  review_file="$review_dir/$(timestamp)-$bd_id.md"
-  base="$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+  review_file="$review_dir/$(timestamp)-$ref.md"
+  base="$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD 2>/dev/null || printf 'HEAD')"
 
   cat > "$prompt_file" <<EOF
 $(reviewer_skill_hint)
@@ -778,6 +1479,8 @@ Handoff path: ${file:-not-found}
 Review output path requested by caller: $review_file
 Suggested git base: $base
 
+$(language_instruction)
+
 Follow the humanize-flow-reviewer skill exactly:
 - Inspect the Beads task, handoff, plan, acceptance criteria, git status, and diff.
 - Do not implement fixes.
@@ -789,8 +1492,340 @@ EOF
   info "review prompt: $prompt_file"
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
-  codex exec ${HUMANIZE_FLOW_CODEX_ARGS:-} "$prompt_text" | tee "$review_file"
+  run_codex_exec "$prompt_text" | tee "$review_file"
   info "review written: $review_file"
+}
+
+commit_failure_looks_hook_related() {
+  local log_file
+  log_file="$1"
+  grep -Eiq '(hook|pre-commit|pre commit|lefthook|husky|lint-staged|eslint|prettier|typecheck|tsc|biome|stylelint|test)' "$log_file"
+}
+
+create_commit_failure_bd() {
+  local run_dir log_file message_file prompt_file task_file output_file prompt_text answer
+  run_dir="$1"; log_file="$2"; message_file="$3"
+
+  if ! command_exists bd; then
+    warn "bd CLI not found; cannot create a Beads task for the commit failure."
+    return 0
+  fi
+  if [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" = "1" ]; then
+    warn "non-interactive mode; skipped Beads task prompt for commit failure."
+    return 0
+  fi
+
+  printf 'Create a Beads task to fix this commit hook failure? [y/N] '
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) info "skipped Beads task creation for commit failure."; return 0 ;;
+  esac
+
+  prompt_file="$run_dir/codex-hook-failure-bd-prompt.md"
+  task_file="$run_dir/hook-failure-bd.json"
+  output_file="$run_dir/hook-failure-bd-create-output.json"
+  cat > "$prompt_file" <<EOF
+You are drafting a Beads task for a failed git commit hook.
+
+$(language_instruction)
+
+Inspect:
+- Commit failure log: $log_file
+- Proposed commit message: $message_file
+- git status --short --untracked-files=all
+- git diff --cached --stat
+- git diff --cached
+- Relevant repository guidance files, especially AGENTS.md and CLAUDE.md when present.
+
+Return only JSON with this shape:
+{
+  "title": "short task title",
+  "description": "actionable task description",
+  "priority": 2,
+  "labels": ["humanize-flow", "commit-hook"]
+}
+
+Rules:
+- The task should be about making the commit hook pass.
+- Distinguish likely code issues from likely local environment issues.
+- Include the failed hook/check name when visible.
+- Mention the saved failure log path.
+- Do not return Markdown fences or explanation.
+EOF
+  info "hook failure Beads prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  run_codex_exec "$prompt_text" > "$task_file"
+  sed -i.bak '/^```/d' "$task_file"
+  rm -f "$task_file.bak"
+
+  python3 - "$task_file" "$log_file" "$output_file" <<'PY'
+import json, re, subprocess, sys
+from pathlib import Path
+
+task_path = Path(sys.argv[1])
+log_path = Path(sys.argv[2])
+output_path = Path(sys.argv[3])
+raw = task_path.read_text(encoding="utf-8").strip()
+try:
+    data = json.loads(raw)
+except Exception:
+    match = re.search(r"\{.*\}", raw, re.S)
+    if not match:
+        raise SystemExit(f"could not parse Codex Beads task JSON: {task_path}")
+    data = json.loads(match.group(0))
+
+title = str(data.get("title") or "Fix commit hook failure").strip()
+description = str(data.get("description") or "").strip()
+priority = str(data.get("priority") or "2").strip()
+labels = data.get("labels") or []
+if isinstance(labels, str):
+    labels = [part.strip() for part in labels.split(",")]
+labels = [re.sub(r"[^A-Za-z0-9_.-]+", "-", str(label).strip()).strip("-") for label in labels]
+labels = [label for label in labels if label]
+for label in ("humanize-flow", "commit-hook"):
+    if label not in labels:
+        labels.append(label)
+if priority not in {"0", "1", "2", "3", "4", "5"}:
+    priority = "2"
+if not description:
+    description = "A git commit hook failed during `humanize-flow commit`."
+description = description.rstrip() + f"\n\nFailure log: `{log_path}`\n"
+
+args = [
+    "bd",
+    "create",
+    title,
+    "-t",
+    "task",
+    "-p",
+    priority,
+    "--description",
+    description,
+    "-l",
+    ",".join(labels),
+    "--json",
+]
+cp = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+if cp.returncode != 0:
+    sys.stderr.write(cp.stderr)
+    raise SystemExit(cp.returncode)
+output_path.write_text(cp.stdout, encoding="utf-8")
+print(cp.stdout.strip())
+PY
+  info "created Beads task for commit failure; output saved: $output_file"
+}
+
+handle_commit_failure() {
+  local run_dir log_file message_file
+  run_dir="$1"; log_file="$2"; message_file="$3"
+  warn "git commit failed; output saved: $log_file"
+  cat "$log_file" >&2
+  if commit_failure_looks_hook_related "$log_file"; then
+    create_commit_failure_bd "$run_dir" "$log_file" "$message_file"
+  else
+    warn "commit failure does not look like a hook/lint/test failure; skipped Beads task prompt."
+  fi
+}
+
+cmd_commit() {
+  require_git_repo
+  local yes=0 message_file prompt_file run_dir prompt_text subject first_line stage_prompt_file stage_paths_file selected_count path commit_log commit_status
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) yes=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow commit [--yes]
+
+Creates a commit with a Codex-drafted Lore commit message. If no changes are
+already staged, Codex first selects which changed files should be staged based
+on git status, the diff, and repository guidance such as AGENTS.md/CLAUDE.md.
+If changes are already staged, the command commits only the staged diff.
+EOF
+        return 0 ;;
+      *) die "Unknown commit option: $1" ;;
+    esac
+    shift
+  done
+  command_exists codex || die "codex CLI not found."
+  run_dir="$(state_dir)/runs/$(timestamp)-commit"
+  mkdir -p "$run_dir"
+  stage_prompt_file="$run_dir/codex-stage-prompt.md"
+  stage_paths_file="$run_dir/stage-paths.txt"
+  if git diff --cached --quiet; then
+    if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
+      die "No changes to commit."
+    fi
+    cat > "$stage_prompt_file" <<EOF
+You are selecting which changed files should be staged for one git commit.
+
+$(language_instruction)
+
+Inspect:
+- git status --short --untracked-files=all
+- git diff --stat
+- git diff
+- Relevant repository guidance files, especially AGENTS.md and CLAUDE.md in the root or along changed paths when present.
+
+Rules:
+- Return only repository-relative file paths to stage, one per line.
+- Do not return Markdown, bullets, quotes, explanations, directories, commands, or absolute paths.
+- Include only files that belong in this commit.
+- Exclude unrelated user changes, generated local runtime files, accidental command output, secrets, credentials, build artifacts, temp files, and anything repository guidance says not to commit.
+- If no changed file should be staged, return exactly: NONE
+- Do not run git add, git commit, or modify files.
+EOF
+    info "stage selection prompt: $stage_prompt_file"
+    prompt_text="$(cat "$stage_prompt_file")"
+    # shellcheck disable=SC2086
+    run_codex_exec "$prompt_text" > "$stage_paths_file"
+    sed -i.bak '/^```/d' "$stage_paths_file"
+    rm -f "$stage_paths_file.bak"
+    selected_count=0
+    while IFS= read -r path || [ -n "$path" ]; do
+      path="${path%$'\r'}"
+      [ -n "$path" ] || continue
+      [ "$path" != "NONE" ] || continue
+      case "$path" in
+        /*|../*|*/../*|.git|.git/*)
+          die "Codex selected an unsafe path to stage: $path"
+          ;;
+      esac
+      if [ -z "$(git status --porcelain --untracked-files=all -- "$path")" ]; then
+        die "Codex selected a path with no working tree changes: $path"
+      fi
+      git add -- "$path"
+      selected_count=$((selected_count + 1))
+    done < "$stage_paths_file"
+    [ "$selected_count" -gt 0 ] || die "Codex did not select any files to stage. Selection kept at $stage_paths_file"
+    info "staged $selected_count path(s) selected by Codex; selection saved: $stage_paths_file"
+  else
+    info "using existing staged changes; unstaged changes are left untouched."
+  fi
+  if git diff --cached --quiet; then
+    die "No staged changes to commit after staging."
+  fi
+  prompt_file="$run_dir/codex-commit-prompt.md"
+  message_file="$run_dir/commit-message.txt"
+  cat > "$prompt_file" <<EOF
+You are writing a git commit message for staged changes only.
+
+$(language_instruction)
+
+Inspect:
+- git status --short
+- git diff --cached --stat
+- git diff --cached
+
+Return only the commit message, with no Markdown fences and no explanation.
+Use the Lore Commit Protocol:
+
+<intent line: why the change was made, not what changed>
+
+<body: narrative context, constraints, approach rationale>
+
+Constraint: <external constraint that shaped the decision>
+Rejected: <alternative considered> | <reason>
+Confidence: <low|medium|high>
+Scope-risk: <narrow|moderate|broad>
+Directive: <forward-looking warning if useful>
+Tested: <what was verified>
+Not-tested: <known gaps>
+
+Keep the first line under 72 characters. Be honest about tests.
+EOF
+  info "commit prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  run_codex_exec "$prompt_text" > "$message_file"
+  sed -i.bak '/^```/d' "$message_file"
+  rm -f "$message_file.bak"
+  first_line="$(sed -n '1p' "$message_file")"
+  [ -n "$first_line" ] || die "Codex returned an empty commit message."
+  info "staged changes:"
+  git diff --cached --stat
+  info "commit message: $message_file"
+  log ""
+  sed -n '1,120p' "$message_file"
+  log ""
+  if [ "$yes" -ne 1 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ]; then
+    printf 'Create commit with this message? [y/N] '
+    read -r answer
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) die "Commit cancelled. Message kept at $message_file" ;;
+    esac
+  fi
+  commit_log="$run_dir/git-commit.log"
+  set +e
+  git commit -F "$message_file" > "$commit_log" 2>&1
+  commit_status=$?
+  set -e
+  if [ "$commit_status" -ne 0 ]; then
+    handle_commit_failure "$run_dir" "$commit_log" "$message_file"
+    return "$commit_status"
+  fi
+  cat "$commit_log"
+}
+
+cmd_push() {
+  require_git_repo
+  local remote="" branch remotes count idx answer
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --remote) shift; remote="${1:-}" ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow push [--remote NAME]
+
+Pushes the current branch. If no remote is provided and more than one remote
+exists, prompts for a remote number.
+EOF
+        return 0 ;;
+      *) die "Unknown push option: $1" ;;
+    esac
+    shift
+  done
+  branch="$(git branch --show-current)"
+  [ -n "$branch" ] || die "Cannot determine current branch."
+  if [ -z "$remote" ]; then
+    remotes="$(git remote)"
+    count="$(printf '%s\n' "$remotes" | sed '/^$/d' | wc -l | tr -d ' ')"
+    [ "$count" -gt 0 ] || die "No git remotes configured."
+    if [ "$count" -eq 1 ]; then
+      remote="$(printf '%s\n' "$remotes" | sed '/^$/d' | sed -n '1p')"
+    else
+      log "Available remotes:"
+      idx=1
+      while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        printf '  %s. %s\n' "$idx" "$r"
+        idx=$((idx + 1))
+      done <<EOF
+$remotes
+EOF
+      if [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" = "1" ]; then
+        die "Multiple remotes configured; pass --remote NAME in non-interactive mode."
+      fi
+      printf 'Select remote number or name: '
+      read -r answer
+      if printf '%s\n' "$answer" | grep -Eq '^[0-9]+$'; then
+        remote="$(printf '%s\n' "$remotes" | sed '/^$/d' | sed -n "${answer}p")"
+      else
+        remote="$answer"
+      fi
+      [ -n "$remote" ] || die "Invalid remote selection."
+    fi
+  fi
+  if ! git remote get-url "$remote" >/dev/null 2>&1; then
+    die "Unknown remote: $remote"
+  fi
+  info "pushing $branch to $remote"
+  git push -u "$remote" "$branch"
 }
 
 cmd_status() {
@@ -840,7 +1875,11 @@ main() {
     run) cmd_run "$@" ;;
     run-next) cmd_run_next "$@" ;;
     review) cmd_review "$@" ;;
+    commit) cmd_commit "$@" ;;
+    push) cmd_push "$@" ;;
     status) cmd_status "$@" ;;
+    config) cmd_config "$@" ;;
+    i18n) cmd_i18n "$@" ;;
     *) die "Unknown command: $cmd. Run 'humanize-flow help'." ;;
   esac
 }

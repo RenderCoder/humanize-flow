@@ -37,6 +37,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese. Keep machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers in their canonical form.
+
 For non-interactive use:
 
 ```bash
@@ -114,3 +116,10 @@ The reviewer checks the implementation against the approved artifacts and return
 ## 6. Iterate or close
 
 If changes are requested, return to the worker with the review findings. If the review passes, close the Beads task according to your project policy.
+
+For final git handoff, stage the intended files, then run:
+
+```bash
+humanize-flow commit
+humanize-flow push
+```

@@ -45,6 +45,8 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: write the planner prompt but do not execute it.
 
+The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese.
+
 ## `humanize-flow plan-from-bd`
 
 Run the Codex planner from an existing Beads task ID.
@@ -75,6 +77,8 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: capture the task and write the planner prompt but do not execute it.
 
+The generated planner prompt applies the configured workflow language while preserving source IDs and machine-readable literals.
+
 For this path, the next command is usually `humanize-flow approve <slug>` rather than `approve --materialize-bd`, because the Beads task already exists.
 
 ## `humanize-flow approve`
@@ -100,7 +104,13 @@ Run Claude Code worker for one Beads task.
 
 ```bash
 humanize-flow run <bd-id>
+humanize-flow run <bd-id> --interactive
+humanize-flow run <bd-id> --model claude-opus-4-7
 ```
+
+Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-opus-4-7`, and permission mode `auto`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream.
+
+Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 
 ## `humanize-flow run-next`
 
@@ -110,13 +120,75 @@ Pick a ready Beads task and run the worker.
 humanize-flow run-next
 ```
 
+When multiple ready tasks or Epic groups exist and stdin is interactive, the CLI asks which group/task to run before starting Claude Code. In non-interactive scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use the deterministic fallback selection.
+
+## `humanize-flow config`
+
+Show or change global Humanize Flow defaults.
+
+```bash
+humanize-flow config show
+humanize-flow config get language
+humanize-flow config set language zh
+humanize-flow config get claude.model
+humanize-flow config set claude.model claude-opus-4-7
+humanize-flow config set claude.permission_mode auto
+humanize-flow config get codex.model
+humanize-flow config set codex.model gpt-5.5
+humanize-flow config get codex.reasoning_effort
+humanize-flow config set codex.reasoning_effort high
+```
+
+Global config is stored in `${XDG_CONFIG_HOME:-$HOME/.config}/humanize-flow/config.json`. Environment variables still override config values for a single command.
+
+If `codex.model` or `codex.reasoning_effort` is unset, Humanize Flow uses the Codex CLI defaults from your normal Codex configuration. Supported reasoning effort values are `low`, `medium`, `high`, and `xhigh`.
+
+## `humanize-flow i18n`
+
+Show or set the language for human-facing generated artifacts.
+
+```bash
+humanize-flow i18n
+humanize-flow i18n en
+humanize-flow i18n zh
+```
+
+The default is `en`. Setting `zh` switches the full workflow to Simplified Chinese for planning docs, Beads task text, implementation summaries, review reports, and commit message prose. Machine-readable literals remain canonical.
+
 ## `humanize-flow review`
 
 Run Codex reviewer for one Beads task.
 
 ```bash
 humanize-flow review <bd-id>
+humanize-flow review <handoff-slug>
 ```
+
+Use the actual Beads task id when possible. Handoff slugs are also accepted and resolved to the matching handoff before the review path is chosen.
+
+## `humanize-flow commit`
+
+Use Codex to draft a Lore commit message and commit the current changes.
+
+```bash
+humanize-flow commit
+humanize-flow commit --yes
+```
+
+If no diff is staged, Codex first selects which changed file paths belong in the commit based on `git status`, the diff, and repository guidance such as `AGENTS.md` or `CLAUDE.md`; the CLI stages only those selected paths. If a diff is already staged, it commits only the staged diff and leaves unstaged changes untouched. It writes the selected paths to `.humanize-flow/runs/<timestamp>-commit/stage-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, shows it, and asks before committing unless `--yes` is passed.
+
+If `git commit` fails because a hook, linter, formatter, typecheck, or test command fails, the command saves the full output to `.humanize-flow/runs/<timestamp>-commit/git-commit.log`. In an interactive terminal, it then asks whether to create a Beads task for fixing the hook failure. Codex drafts the task from the hook output and staged diff; the CLI does not create this task silently.
+
+## `humanize-flow push`
+
+Push the current branch.
+
+```bash
+humanize-flow push
+humanize-flow push --remote origin
+```
+
+If exactly one remote exists, the CLI pushes to it. If multiple remotes exist, it lists them and asks for a number or remote name. In non-interactive mode, pass `--remote`.
 
 ## `humanize-flow status`
 
@@ -132,6 +204,11 @@ humanize-flow status
 | --- | --- |
 | `HUMANIZE_FLOW_HOME` | Distribution root when installed. |
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | Extra arguments for `claude -p`. |
+| `HUMANIZE_FLOW_CLAUDE_MODEL` | Override the configured Claude Code worker model. |
+| `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | Override the configured Claude Code permission mode. |
+| `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit runs. |
+| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit runs. |
+| `HUMANIZE_FLOW_LANGUAGE` | Override generated artifact language for one command. |
 | `HUMANIZE_FLOW_CODEX_ARGS` | Extra arguments for `codex exec`. |
 | `HUMANIZE_FLOW_BIN_DIR` | Install location for the CLI. |
 | `CODEX_SKILLS_DIR` | Override Codex user skill path. |

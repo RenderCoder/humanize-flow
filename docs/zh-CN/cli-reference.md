@@ -45,6 +45,8 @@ humanize-flow plan --slug <slug> --request "<request text>"
 - `--sandbox <mode>`：传给 `codex exec` 的 sandbox 模式，默认 `workspace-write`。
 - `--no-codex`：只写 planner prompt，不实际执行。
 
+生成的 planner prompt 会包含当前工作流语言配置。默认是英文；使用 `humanize-flow i18n zh` 可切换到简体中文。
+
 ## `humanize-flow plan-from-bd`
 
 从已有 Beads 任务 ID 运行 Codex planner。
@@ -75,6 +77,8 @@ docs/humanize-flow/<slug>/bd-source.json
 - `--sandbox <mode>`：传给 `codex exec` 的 sandbox 模式，默认 `workspace-write`。
 - `--no-codex`：只捕获任务并写 planner prompt，不实际执行 Codex。
 
+生成的 planner prompt 同样会应用当前工作流语言配置，同时保留来源任务 ID 和机器可读字面量的原始形式。
+
 这条路径通常下一步是 `humanize-flow approve <slug>`，而不是 `approve --materialize-bd`，因为 Beads 任务已经存在。
 
 ## `humanize-flow approve`
@@ -100,7 +104,13 @@ humanize-flow materialize-bd <slug>
 
 ```bash
 humanize-flow run <bd-id>
+humanize-flow run <bd-id> --interactive
+humanize-flow run <bd-id> --model claude-opus-4-7
 ```
+
+默认 worker 运行使用 Claude Code print 模式，内部使用 `stream-json`、partial message chunks、hook events、`--verbose`、模型 `claude-opus-4-7` 和权限模式 `auto`。终端会显示人类可读的进展日志。run 目录中会同时保存 `claude-final.md` 人类可读日志和 `claude-final.jsonl` 原始 Claude 事件流。
+
+使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 
 ## `humanize-flow run-next`
 
@@ -110,13 +120,75 @@ humanize-flow run <bd-id>
 humanize-flow run-next
 ```
 
+当存在多个 ready 任务或 Epic 分组，并且 stdin 是交互式终端时，CLI 会先询问要执行哪个分组/任务，再启动 Claude Code。脚本中可设置 `HUMANIZE_FLOW_NONINTERACTIVE=1` 使用确定性的回退选择。
+
+## `humanize-flow config`
+
+查看或修改 Humanize Flow 全局默认值。
+
+```bash
+humanize-flow config show
+humanize-flow config get language
+humanize-flow config set language zh
+humanize-flow config get claude.model
+humanize-flow config set claude.model claude-opus-4-7
+humanize-flow config set claude.permission_mode auto
+humanize-flow config get codex.model
+humanize-flow config set codex.model gpt-5.5
+humanize-flow config get codex.reasoning_effort
+humanize-flow config set codex.reasoning_effort high
+```
+
+全局配置保存在 `${XDG_CONFIG_HOME:-$HOME/.config}/humanize-flow/config.json`。环境变量仍可对单次命令覆盖配置值。
+
+如果没有设置 `codex.model` 或 `codex.reasoning_effort`，Humanize Flow 会使用你正常 Codex 配置中的默认值。推理强度支持 `low`、`medium`、`high` 和 `xhigh`。
+
+## `humanize-flow i18n`
+
+查看或设置面向人类的生成产物语言。
+
+```bash
+humanize-flow i18n
+humanize-flow i18n en
+humanize-flow i18n zh
+```
+
+默认是 `en`。设置为 `zh` 会把完整链路切换到简体中文，包括规划文档、Beads 任务文本、实现总结、review 报告和 commit message 正文。机器可读字面量保持原始形式。
+
 ## `humanize-flow review`
 
 为一个 Beads 任务运行 Codex reviewer。
 
 ```bash
 humanize-flow review <bd-id>
+humanize-flow review <handoff-slug>
 ```
+
+尽量使用实际 Beads 任务 ID。也可以传 handoff slug，CLI 会先解析匹配的 handoff，再选择正确的 review 目录。
+
+## `humanize-flow commit`
+
+使用 Codex 起草 Lore commit message，并提交当前变更。
+
+```bash
+humanize-flow commit
+humanize-flow commit --yes
+```
+
+如果当前没有 staged diff，Codex 会先根据 `git status`、diff，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交；CLI 只 stage 这些被选中的路径。如果已经有 staged diff，则只提交已有 staged diff，并保留未 staged 的变更。被选中的路径会写到 `.humanize-flow/runs/<timestamp>-commit/stage-paths.txt`，生成的 message 会写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，展示后再询问是否提交；传 `--yes` 时跳过确认。
+
+如果 `git commit` 因 hook、lint、format、typecheck 或测试命令失败而失败，命令会把完整输出保存到 `.humanize-flow/runs/<timestamp>-commit/git-commit.log`。在交互终端中，它会询问是否创建一个 Beads 修复任务。Codex 会根据 hook 输出和 staged diff 起草任务；CLI 不会静默创建这个任务。
+
+## `humanize-flow push`
+
+推送当前分支。
+
+```bash
+humanize-flow push
+humanize-flow push --remote origin
+```
+
+如果只有一个 remote，CLI 会直接推送。如果有多个 remote，会列出来并要求输入数字或 remote 名称。非交互模式下请传 `--remote`。
 
 ## `humanize-flow status`
 
@@ -132,6 +204,11 @@ humanize-flow status
 | --- | --- |
 | `HUMANIZE_FLOW_HOME` | 安装后的分发根目录。 |
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | 传给 `claude -p` 的额外参数。 |
+| `HUMANIZE_FLOW_CLAUDE_MODEL` | 覆盖 Claude Code worker 模型配置。 |
+| `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | 覆盖 Claude Code 权限模式配置。 |
+| `HUMANIZE_FLOW_CODEX_MODEL` | 覆盖 planner/review/commit 使用的 Codex 模型配置。 |
+| `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | 覆盖 planner/review/commit 使用的 Codex 推理强度配置。 |
+| `HUMANIZE_FLOW_LANGUAGE` | 对单次命令覆盖生成产物语言。 |
 | `HUMANIZE_FLOW_CODEX_ARGS` | 传给 `codex exec` 的额外参数。 |
 | `HUMANIZE_FLOW_BIN_DIR` | CLI 安装位置。 |
 | `CODEX_SKILLS_DIR` | 覆盖 Codex 用户级 skill 路径。 |

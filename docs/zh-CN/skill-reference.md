@@ -22,6 +22,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
+面向人工审核的 Markdown 产物遵循工作流语言配置，默认使用英文。JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符等机器可读字面量保持原始形式。
+
 ## `humanize-flow-bd-planner`
 
 用于**已有 Beads 任务规划**的 Codex skill。
@@ -50,6 +52,8 @@ docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
+
+面向人工审核的 Markdown 产物遵循工作流语言配置，默认使用英文。来源任务 ID 和机器可读字面量保持原始形式。
 
 关键 handoff 字段：
 
@@ -86,6 +90,8 @@ Claude Code skill，用于实现一个已批准的 Beads 任务。
 ```
 
 CLI 也会通过 `claude -p` 传入 worker skill 指令，因为并非所有 Claude Code 非交互场景都支持 slash invocation。
+
+默认情况下，CLI worker 运行会在内部使用 Claude Code `stream-json`，包含 hook events 和 partial message chunks，然后在终端渲染为人类可读的进展日志。原始事件流仍会保存为 `claude-final.jsonl`。需要完整 Claude Code 交互会话时，使用 `humanize-flow run <bd-id> --interactive`。
 
 ## `humanize-flow-reviewer`
 
