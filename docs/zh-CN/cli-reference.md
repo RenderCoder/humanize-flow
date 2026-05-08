@@ -45,7 +45,7 @@ humanize-flow plan --slug <slug> --request "<request text>"
 - `--sandbox <mode>`：传给 `codex exec` 的 sandbox 模式，默认 `workspace-write`。
 - `--no-codex`：只写 planner prompt，不实际执行。
 
-生成的 planner prompt 会包含当前工作流语言配置。默认是英文；使用 `humanize-flow i18n zh` 可切换到简体中文。
+生成的 planner prompt 会包含当前工作流语言配置。默认是英文；使用 `humanize-flow i18n zh` 可切换到简体中文。语言策略会覆盖 `request.md`、`plan.md`、`acceptance.md`、`bd-plan.md`、handoff prose，以及生成的 Beads epic/task 标题、描述和验收标准。
 
 ## `humanize-flow plan-from-bd`
 
@@ -77,7 +77,7 @@ docs/humanize-flow/<slug>/bd-source.json
 - `--sandbox <mode>`：传给 `codex exec` 的 sandbox 模式，默认 `workspace-write`。
 - `--no-codex`：只捕获任务并写 planner prompt，不实际执行 Codex。
 
-生成的 planner prompt 同样会应用当前工作流语言配置，同时保留来源任务 ID 和机器可读字面量的原始形式。
+生成的 planner prompt 会把当前工作流语言应用到生成的规划 prose、`bd-plan.md` 和 handoff `bd.*` 任务 prose，同时保留来源任务 ID 和机器可读字面量的原始形式。原始任务文本会保存在 `bd-source.json`。
 
 这条路径通常下一步是 `humanize-flow approve <slug>`，而不是 `approve --materialize-bd`，因为 Beads 任务已经存在。
 
@@ -153,7 +153,7 @@ humanize-flow i18n en
 humanize-flow i18n zh
 ```
 
-默认是 `en`。设置为 `zh` 会把完整链路切换到简体中文，包括规划文档、Beads 任务文本、实现总结、review 报告和 commit message 正文。机器可读字面量保持原始形式。
+默认是 `en`。设置为 `zh` 会把完整链路切换到简体中文，包括 `bd-plan.md` 在内的规划文档、handoff prose、实际创建到 Beads 的 epic/task 标题、描述、验收标准、实现总结、review 报告、PR 文本和 commit message 正文。机器可读字面量保持原始形式。
 
 ## `humanize-flow review`
 
@@ -165,6 +165,29 @@ humanize-flow review <handoff-slug>
 ```
 
 尽量使用实际 Beads 任务 ID。也可以传 handoff slug，CLI 会先解析匹配的 handoff，再选择正确的 review 目录。
+
+`review` 命令默认不会开启 yolo 或 full-access 模式；它使用你的正常 Codex 配置运行 `codex exec`，并应用 Humanize Flow 中配置的 Codex model/reasoning 覆盖。Review 应该保持只读。如果当前 Codex sandbox 无法读取所需的仓库文件、handoff、plan、acceptance criteria 或 diff，reviewer 应该返回 `blocked`，而不是在证据不足时通过。
+
+当 verdict 是 `pass` 时，review 报告会包含人类验证指南，包括手工测试步骤和提交/推送前检查清单。当 verdict 是 `changes_requested` 或 `blocked` 时，报告会包含人类校正选项，可继续交给 `review-feedback` 合并。
+
+## `humanize-flow review-feedback`
+
+把人类手工测试反馈或 review 校正意见合并成一份新的 Codex review 报告。
+
+```bash
+humanize-flow review-feedback <bd-id>
+humanize-flow review-feedback <bd-id> --note "手工测试发现空状态仍然重叠。"
+humanize-flow review-feedback <bd-id> --from docs/manual-test-notes.md
+humanize-flow review-feedback <handoff-slug> --review docs/humanize-flow/<slug>/reviews/<file>.md --from docs/manual-test-notes.md
+```
+
+不传 `--note` 或 `--from` 时，命令会打开 `${VISUAL:-${EDITOR:-vi}}`，让人类直接填写反馈。它会把人类反馈保存到 `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`，读取前一次 review、handoff、plan、acceptance criteria、git status 和 diff，然后在 `docs/humanize-flow/<slug>/reviews/` 下写出综合后的 review。Codex 必须在考虑人类反馈后重新判断最终 verdict；反馈可能新增 finding、补充缺失验证证据、校正 review 范围，或使原 finding 失效。
+
+选项：
+
+- `--note <text>`：内联人类反馈。
+- `--from <file>`：包含手工测试记录或 review 校正上下文的 Markdown 文件。
+- `--review <file>`：要合并的前一次 review；不传时使用该 handoff slug 最新的 review。
 
 ## `humanize-flow commit`
 

@@ -8,6 +8,7 @@ humanize-flow coordinates tools that can read files, write files, and run comman
 - Worker requires an approved handoff.
 - Reviewer does not implement fixes.
 - CLI does not default to full-access sandbox modes.
+- Codex review does not enable yolo or full-access mode by default.
 - Claude Code worker runs default to permission mode `auto`, not full permission bypass.
 - humanize/RLCR is optional and should not require unsafe permissions by default.
 
@@ -25,7 +26,7 @@ Brief Beads descriptions are not enough authority for implementation. Worker and
 
 ## Permission guidance
 
-Use least privilege. For planning, `codex exec --sandbox workspace-write` is enough to write planning artifacts. For review, read-only behavior is preferred when practical.
+Use least privilege. For planning, `codex exec --sandbox workspace-write` is enough to write planning artifacts. For review, read-only behavior is preferred when practical. If the active Codex sandbox cannot read the repository files, handoff, plan, acceptance criteria, Beads task, or diff needed for review, the reviewer should return `blocked` and name the missing evidence.
 
 For Claude Code, the default worker permission mode is `auto` so approved tasks can proceed without prompting for every file edit. This is intentionally different from `bypassPermissions` or `--dangerously-skip-permissions`, which should remain an explicit local choice only.
 

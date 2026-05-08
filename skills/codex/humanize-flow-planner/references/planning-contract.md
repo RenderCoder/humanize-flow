@@ -2,7 +2,7 @@
 
 The planner converts a request into artifacts that both humans and agents can trust.
 
-Write human-review Markdown artifacts in the language requested by the user or CLI prompt. Default to English when no language policy is provided. Keep machine-readable names and technical literals in their canonical form: JSON keys and enum values, Beads labels, file paths, commands, APIs, package names, code identifiers, and Beads IDs.
+Write human-review Markdown artifacts in the language requested by the user or CLI prompt. Default to English when no language policy is provided. This includes `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, and all generated Beads epic/task titles, descriptions, and acceptance criteria. Keep machine-readable names and technical literals in their canonical form: JSON keys and enum values, Beads labels, file paths, commands, APIs, package names, code identifiers, and Beads IDs.
 
 ## Phase 1: Intake
 
@@ -60,6 +60,8 @@ Bad:
 ## Phase 6: Beads task graph
 
 Write `bd-plan.md` and add task definitions to the handoff manifest. Use small tasks that a worker can complete independently.
+
+`bd-plan.md`, `bd.epic.title`, `bd.epic.description`, `bd.tasks[].title`, `bd.tasks[].description`, and `bd.tasks[].acceptance_criteria` are human-facing generated prose. Write them in the requested language so that later `materialize-bd` creates Beads issues in that language.
 
 Each task needs:
 

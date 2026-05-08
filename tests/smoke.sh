@@ -83,6 +83,9 @@ case "$*" in
   *"drafting a Beads task for a failed git commit hook"*)
     printf '{"title":"Fix commit hook eslint failure","description":"Commit hook failed because eslint was unavailable.","priority":2,"labels":["humanize-flow","commit-hook","eslint"]}\n'
     ;;
+  *"updating a Humanize Flow review with human manual-test feedback"*)
+    printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
+    ;;
   *"drafting a professional GitHub pull request"*)
     case "$*" in
       *"language code: zh"*)
@@ -127,6 +130,9 @@ chmod +x "$TMP/fake-bin/gh"
   grep -R 'language code: en' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
   HUMANIZE_FLOW_LANGUAGE=zh PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan-from-bd bd-1234 --slug imported-task-zh --no-codex >/dev/null
   grep -R 'Simplified Chinese (language code: zh)' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
+  grep -R 'generated bd.tasks title, description, and acceptance criteria fields' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
+  HUMANIZE_FLOW_LANGUAGE=zh PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan --slug request-zh --request "Add export support" --no-codex >/dev/null
+  grep -R 'bd-plan.md and Beads epic/task titles, descriptions, and acceptance criteria' .humanize-flow/runs/*/planner-prompt.md >/dev/null
   python3 - <<'PY'
 import json
 from pathlib import Path
@@ -153,6 +159,30 @@ PY
   test -f docs/humanize-flow/imported-task/bd-source.json
   grep -q 'Add undo redo support' docs/humanize-flow/imported-task/bd-source.json
   grep -R '\$humanize-flow-bd-planner' .humanize-flow/runs >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('.humanize-flow/handoffs/zh-materialize.json')
+data = {
+    'schema_version': '1',
+    'slug': 'zh-materialize',
+    'summary': '中文摘要',
+    'state': 'approved',
+    'approval': {'status': 'approved'},
+    'artifacts': {
+        'request': 'docs/humanize-flow/zh-materialize/request.md',
+        'plan': 'docs/humanize-flow/zh-materialize/plan.md',
+        'acceptance': 'docs/humanize-flow/zh-materialize/acceptance.md',
+        'bd_plan': 'docs/humanize-flow/zh-materialize/bd-plan.md',
+    },
+    'bd': {'materialized': False, 'tasks': []},
+}
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+PY
+  HUMANIZE_FLOW_LANGUAGE=zh BD_CREATE_ARGS_CAPTURE="$TMP/bd-materialize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" materialize-bd zh-materialize >/dev/null
+  grep -q 'Humanize Flow 上下文' "$TMP/bd-materialize-args.txt"
+  grep -q '需求' "$TMP/bd-materialize-args.txt"
+  grep -q 'Beads 计划' "$TMP/bd-materialize-args.txt"
   CLAUDE_ARGS_CAPTURE="$TMP/claude-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
   grep -q -- '--model claude-opus-4-7' "$TMP/claude-args.txt"
   grep -q -- '--permission-mode auto' "$TMP/claude-args.txt"
@@ -169,6 +199,29 @@ PY
   test ! -d docs/humanize-flow/unknown/reviews
   grep -q 'Task id: bd-1234' "$TMP/codex-review-args.txt"
   grep -q 'Handoff slug: imported-task' "$TMP/codex-review-args.txt"
+  printf 'Manual test found an overlap in the empty state.\n' > manual-feedback.md
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-feedback-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review-feedback imported-task --from manual-feedback.md >/dev/null
+  grep -q 'Human feedback:' "$TMP/codex-review-feedback-args.txt"
+  grep -q 'Prior review:' "$TMP/codex-review-feedback-args.txt"
+  grep -R 'Manual test found an overlap' .humanize-flow/runs/*/human-feedback.md >/dev/null
+  grep -R 'Human feedback found a manual-test issue' docs/humanize-flow/imported-task/reviews >/dev/null
+  cat > "$TMP/fake-bin/editor" <<'EDITOR'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'Editor feedback found a translated label issue.\n' > "$1"
+EDITOR
+  chmod +x "$TMP/fake-bin/editor"
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-feedback-editor-args.txt" EDITOR="$TMP/fake-bin/editor" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review-feedback imported-task >/dev/null
+  grep -q 'Human feedback:' "$TMP/codex-review-feedback-editor-args.txt"
+  grep -R 'Editor feedback found a translated label issue' .humanize-flow/runs/*/human-feedback.md >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path('.humanize-flow/handoffs/imported-task.json').read_text(encoding='utf-8'))
+artifacts = data.get('artifacts', {})
+assert artifacts.get('latest_review', '').endswith('-imported-task-human-feedback.md'), artifacts
+assert artifacts.get('latest_human_feedback', '').endswith('/human-feedback.md'), artifacts
+PY
   HUMANIZE_FLOW_CODEX_MODEL=gpt-5.5 HUMANIZE_FLOW_CODEX_REASONING_EFFORT=high CODEX_ARGS_CAPTURE="$TMP/codex-configured-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
   grep -q -- '--model gpt-5.5' "$TMP/codex-configured-review-args.txt"
   grep -q -- '-c model_reasoning_effort="high"' "$TMP/codex-configured-review-args.txt"

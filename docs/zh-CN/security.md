@@ -8,6 +8,7 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 - Worker 需要已批准 handoff。
 - Reviewer 不实现修复。
 - CLI 默认不使用 full-access sandbox 模式。
+- Codex review 默认不会开启 yolo 或 full-access 模式。
 - Claude Code worker 默认使用权限模式 `auto`，不是完全绕过权限。
 - humanize/RLCR 是可选增强，不应默认要求危险权限。
 
@@ -25,7 +26,7 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 
 ## 权限建议
 
-使用最小权限。规划阶段通常只需要 `codex exec --sandbox workspace-write` 来写规划产物。审查阶段优先采用只读行为。
+使用最小权限。规划阶段通常只需要 `codex exec --sandbox workspace-write` 来写规划产物。审查阶段优先采用只读行为。如果当前 Codex sandbox 无法读取 review 所需的仓库文件、handoff、plan、acceptance criteria、Beads 任务或 diff，reviewer 应返回 `blocked` 并说明缺少哪些证据。
 
 Claude Code worker 默认权限模式是 `auto`，这样已批准任务可以顺畅执行，不需要每次文件编辑都询问。这和 `bypassPermissions` 或 `--dangerously-skip-permissions` 不同；后两者仍应只作为明确的本地选择。
 

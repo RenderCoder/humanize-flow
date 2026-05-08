@@ -45,7 +45,7 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: write the planner prompt but do not execute it.
 
-The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese.
+The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese. The language policy covers `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria.
 
 ## `humanize-flow plan-from-bd`
 
@@ -77,7 +77,7 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: capture the task and write the planner prompt but do not execute it.
 
-The generated planner prompt applies the configured workflow language while preserving source IDs and machine-readable literals.
+The generated planner prompt applies the configured workflow language to generated planning prose, `bd-plan.md`, and handoff `bd.*` task prose while preserving source IDs and machine-readable literals. Raw source task text is preserved in `bd-source.json`.
 
 For this path, the next command is usually `humanize-flow approve <slug>` rather than `approve --materialize-bd`, because the Beads task already exists.
 
@@ -153,7 +153,7 @@ humanize-flow i18n en
 humanize-flow i18n zh
 ```
 
-The default is `en`. Setting `zh` switches the full workflow to Simplified Chinese for planning docs, Beads task text, implementation summaries, review reports, and commit message prose. Machine-readable literals remain canonical.
+The default is `en`. Setting `zh` switches the full workflow to Simplified Chinese for planning docs including `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable literals remain canonical.
 
 ## `humanize-flow review`
 
@@ -165,6 +165,29 @@ humanize-flow review <handoff-slug>
 ```
 
 Use the actual Beads task id when possible. Handoff slugs are also accepted and resolved to the matching handoff before the review path is chosen.
+
+The review command does not enable a yolo or full-access mode by default; it runs `codex exec` with your normal Codex configuration and any Humanize Flow Codex model/reasoning overrides. Review should be read-only. If the active Codex sandbox cannot read the repository files, handoff, plan, acceptance criteria, or diff it needs, the reviewer should return `blocked` rather than passing with incomplete evidence.
+
+When the verdict is `pass`, the review report includes a human verification guide with manual test steps and a checklist to complete before commit/push. When the verdict is `changes_requested` or `blocked`, the report includes human correction options that can be fed into `review-feedback`.
+
+## `humanize-flow review-feedback`
+
+Merge human manual-test feedback or review corrections into a new Codex review report.
+
+```bash
+humanize-flow review-feedback <bd-id>
+humanize-flow review-feedback <bd-id> --note "Manual test found the empty state still overlaps."
+humanize-flow review-feedback <bd-id> --from docs/manual-test-notes.md
+humanize-flow review-feedback <handoff-slug> --review docs/humanize-flow/<slug>/reviews/<file>.md --from docs/manual-test-notes.md
+```
+
+Without `--note` or `--from`, the command opens `${VISUAL:-${EDITOR:-vi}}` so the human can write feedback directly. It saves the human feedback under `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`, reads the prior review, handoff, plan, acceptance criteria, git status, and diff, then writes a consolidated review under `docs/humanize-flow/<slug>/reviews/`. Codex must re-evaluate the final verdict after considering the human feedback; feedback can add a new finding, supply missing verification evidence, correct review scope, or invalidate a prior finding.
+
+Options:
+
+- `--note <text>`: inline human feedback.
+- `--from <file>`: Markdown file containing manual-test notes or review correction context.
+- `--review <file>`: prior review to merge. If omitted, the latest review for the handoff slug is used.
 
 ## `humanize-flow commit`
 

@@ -2,7 +2,7 @@
 
 A good plan from an existing Beads task should be better than the original task, not just a copy of it.
 
-Human-review Markdown artifacts should follow the requested language policy and default to English. Keep source task identifiers, commands, paths, JSON keys, enum values, APIs, code identifiers, and Beads IDs in their canonical form.
+Human-review Markdown artifacts, generated handoff prose, and generated Beads task prose should follow the requested language policy and default to English. Keep source task identifiers, commands, paths, JSON keys, enum values, APIs, code identifiers, and Beads IDs in their canonical form. Preserve raw source language in `bd-source.json`, but do not copy source prose verbatim when it would violate the requested language for generated artifacts.
 
 ## `request.md`
 
@@ -42,3 +42,5 @@ For the existing-task path, this is not a materialization plan by default. It sh
 ## Handoff JSON
 
 The JSON must be machine-readable, valid, and explicit enough for the worker to run without rereading the entire planning conversation.
+
+Generated prose fields such as `summary`, `assumptions`, `open_questions`, `bd.tasks[].title`, `bd.tasks[].description`, and `bd.tasks[].acceptance_criteria` must use the requested language. Source-preservation fields such as `source.title` may keep the original Beads task language.

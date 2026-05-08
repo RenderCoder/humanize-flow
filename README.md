@@ -76,18 +76,21 @@ After reviewing the plan:
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
 humanize-flow review <bd-id>
+humanize-flow review-feedback <bd-id>
 humanize-flow commit
 humanize-flow push
 humanize-flow pr
 ```
 
-Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-opus-4-7`, and permission mode `auto`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
+Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-opus-4-7`, and permission mode `auto`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`; `review` does not enable yolo or full-access mode by default. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
 
 After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language, saves the draft under `.humanize-flow/runs/`, and creates the PR with `gh pr create`.
+
+Codex `pass` reviews include a human verification guide. Complete that manual checklist before commit/push. If manual testing finds a problem or corrects the review scope, run `humanize-flow review-feedback <bd-id>`; the CLI opens your editor for feedback and then produces an updated combined Codex + human review verdict.
 
 ## Planning from an existing Beads task
 
@@ -120,7 +123,7 @@ humanize-flow plan --slug undo-redo --from examples/minimal-feature-request.md
 humanize-flow plan-from-bd bd-1234 --slug undo-redo
 ```
 
-Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese for planning docs, Beads task text, implementation summaries, review reports, and commit message prose. Machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers stay in their canonical form.
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese for planning docs including `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers stay in their canonical form.
 
 Beads tasks are allowed to stay concise for queue readability. The execution contract is not the short Beads text alone: Claude Code worker prompts require the approved handoff plus `plan.md` and `acceptance.md`, and Codex review blocks when those artifacts are missing.
 
@@ -160,6 +163,7 @@ Recommended workflow tools:
 - The worker refuses unapproved handoffs.
 - The reviewer does not implement fixes.
 - The CLI does not default to full-access sandbox modes.
+- Codex review does not enable yolo by default; if it cannot read the needed evidence under the active sandbox, the review should block.
 - Dangerous permissions should be used only in trusted, isolated environments.
 
 ## Documentation

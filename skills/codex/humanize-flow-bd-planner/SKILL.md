@@ -28,7 +28,7 @@ Your job is to read the existing task, clarify it with the human when necessary,
 4. **Do not silently rewrite task intent.** Preserve the original Beads task meaning and record any interpretation in the plan.
 5. **Do not mark work approved without explicit human approval.** Draft artifacts are safe; execution is not.
 6. **Discuss important ambiguity.** If the task is underspecified in a way that can change architecture, data model, UX, security, permissions, migrations, or test scope, ask concise questions before finalizing.
-7. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, source task IDs, and Beads IDs in their canonical form.
+7. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. This includes `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, and generated `bd.*` task title, description, and acceptance criteria fields. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, source task IDs, and Beads IDs in their canonical form. Preserve raw source task text in `bd-source.json` and source metadata; do not let source language override the requested language for generated planning prose.
 
 ## Required input
 

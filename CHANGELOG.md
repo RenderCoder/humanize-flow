@@ -2,7 +2,16 @@
 
 All notable changes to humanize-flow will be documented in this file.
 
-## Unreleased
+## [0.4.0] - 2026-05-08
+
+### Changed
+
+- Codex reviewer reports now require a human verification guide for `pass` verdicts and human correction options for `changes_requested` or `blocked` verdicts.
+- Strengthen i18n enforcement so `bd-plan.md`, handoff Beads prose, materialized Beads titles/descriptions/acceptance criteria, and existing-task planning output follow the configured workflow language.
+
+### Added
+
+- Add `humanize-flow review-feedback` for merging human manual-test feedback or review corrections into an updated Codex review verdict.
 
 ## [0.3.0] - 2026-05-07
 

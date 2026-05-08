@@ -22,7 +22,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-Human-review Markdown output follows the configured workflow language and defaults to English. Machine-readable literals such as JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers remain canonical.
+Human-review Markdown output and generated Beads prose follow the configured workflow language and default to English. This includes `bd-plan.md`, handoff prose, and Beads epic/task titles, descriptions, and acceptance criteria. Machine-readable literals such as JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers remain canonical.
 
 ## `humanize-flow-bd-planner`
 
@@ -53,7 +53,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-Human-review Markdown output follows the configured workflow language and defaults to English. Source task IDs and machine-readable literals remain canonical.
+Human-review Markdown output and generated handoff task prose follow the configured workflow language and default to English. Source task text is preserved in `bd-source.json`; source task IDs and machine-readable literals remain canonical.
 
 Important handoff fields:
 

@@ -34,12 +34,23 @@ Your job is to determine whether one implemented Beads task satisfies its approv
 - Inspect `git status --short`.
 - Inspect the relevant diff, ideally against the branch base.
 - Check test evidence from worker summaries and run lightweight read-only checks when useful.
+- If this is a review update with human feedback, read the prior review and human feedback, then explicitly decide whether the feedback changes scope, invalidates a finding, adds a finding, or supplies missing verification evidence.
 
 ## Verdicts
 
 - `pass`: acceptance criteria are met and no blocking issue remains.
 - `changes_requested`: implementation is close but has one or more fixable blockers.
 - `blocked`: review cannot complete due to missing context, missing artifacts, failing environment, or unsafe ambiguity.
+
+## Human gate
+
+A `pass` verdict is not a direct instruction to commit and push. When the verdict is `pass`, include a **Human verification guide** with manual test steps, a checkbox checklist, and stop conditions. Tell the user to complete that guide before running `humanize-flow commit`, `humanize-flow push`, or `humanize-flow pr`.
+
+When the verdict is `changes_requested` or `blocked`, include **Human correction options**. Explain what human scope clarification, ignored-file correction, missing artifact, or manual evidence could change the verdict. If the human provides follow-up feedback, it should be merged with:
+
+```bash
+humanize-flow review-feedback <bd-id> --from <feedback-file>
+```
 
 ## Final response
 

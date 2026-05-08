@@ -42,9 +42,34 @@ Write `None` if there are no findings.
 - Result:
 - Missing evidence:
 
+## Human verification guide
+
+Required when the verdict is `pass`; omit only when the verdict is not `pass`.
+
+- Manual test steps:
+  1. `<step>`
+  2. `<step>`
+- Checklist before commit/push:
+  - [ ] `<observable condition>`
+  - [ ] `<observable condition>`
+- Stop conditions:
+  - `<symptom that should return to review-feedback or worker>`
+
+## Human correction options
+
+Required when the verdict is `changes_requested` or `blocked`; optional when the verdict is `pass`.
+
+- Potential scope corrections:
+- Evidence that would change the verdict:
+- Suggested command to merge human feedback:
+
+```bash
+humanize-flow review-feedback <bd-id> --from <feedback-file>
+```
+
 ## Next step
 
-- If pass: `Task can be closed.`
+- If pass: `Complete the human verification checklist before commit/push.`
 - If changes requested: `Return to worker with the findings above.`
 - If blocked: `Resolve the blocker before review can complete.`
 ```

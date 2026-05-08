@@ -37,7 +37,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-面向人类的生成产物默认使用英文。使用 `humanize-flow i18n zh` 可把完整链路切换到简体中文。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+面向人类的生成产物默认使用英文。使用 `humanize-flow i18n zh` 可把完整链路切换到简体中文，包括 `bd-plan.md`、handoff prose，以及生成的 Beads epic/task 标题、描述和验收标准。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
 
 非交互方式：
 
@@ -65,7 +65,7 @@ CLI 流程：
 humanize-flow plan-from-bd <bd-id> --slug <slug>
 ```
 
-这条路径会把 `bd show <bd-id> --json` 保存为 `bd-source.json`，并写入一个链接已有任务的 handoff。通常不需要创建 Beads 任务，因为任务已经存在。
+这条路径会把 `bd show <bd-id> --json` 保存为 `bd-source.json`，并写入一个链接已有任务的 handoff。原始任务文本保留在 `bd-source.json`，生成的 request、plan、acceptance、`bd-plan.md` 和 handoff 任务 prose 遵循当前工作流语言。通常不需要创建 Beads 任务，因为任务已经存在。
 
 ## 3. 批准并创建 Beads 任务
 
@@ -114,6 +114,18 @@ Reviewer 会对照批准的产物进行审查，并返回：
 - `blocked`
 
 缺少 handoff、plan 或 acceptance 证据时应该返回 `blocked`，而不是 `pass`。
+
+CLI 默认不会为 Codex review 开启 yolo 或 full-access 权限。Review 应依赖对仓库、handoff、plan、acceptance criteria、Beads 任务和 diff 的读取权限；如果当前 Codex sandbox 无法读取这些证据，正确结果是 `blocked`。
+
+当 verdict 是 `pass` 时，报告会包含人类验证指南。最终 git 交付前，先完成人工测试步骤和检查清单。Codex pass 表示代码满足被审查的契约；它不是立即提交的命令。
+
+如果手工测试发现问题，或者人类判断某个 Codex finding 是因为 scope 或上下文缺失导致的，可以把反馈合并成新的 review。不传 `--note` 或 `--from` 时，命令会打开你的编辑器，保存退出后继续执行：
+
+```bash
+humanize-flow review-feedback <bd-id>
+```
+
+更新后的 review 会综合前一次 Codex review 和人类反馈，并重新判断 verdict。它可以把 `pass` 改成 `changes_requested`，也可以在人类反馈提供有效 scope 校正或缺失证据时，把 `changes_requested` / `blocked` 改成 `pass`。
 
 ## 6. 迭代或关闭
 

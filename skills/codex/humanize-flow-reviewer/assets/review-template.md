@@ -30,6 +30,29 @@ Use severity labels:
 
 Summarize tests run and results.
 
+## Human verification guide
+
+Required for `pass` verdicts.
+
+- Manual test steps:
+  1. `<step>`
+- Checklist before commit/push:
+  - [ ] `<observable condition>`
+- Stop conditions:
+  - `<symptom that should stop delivery>`
+
+## Human correction options
+
+Required for `changes_requested` or `blocked` verdicts.
+
+- Potential scope corrections:
+- Evidence that would change the verdict:
+- Suggested command:
+
+```bash
+humanize-flow review-feedback <bd-id> --from <feedback-file>
+```
+
 ## Recommendation
 
 State whether the task can be closed or must return to the worker.

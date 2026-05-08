@@ -2,7 +2,7 @@
 
 This skill converts a pre-existing Beads task into a Humanize Flow handoff.
 
-Write human-review Markdown artifacts in the language requested by the user or CLI prompt. Default to English when no language policy is provided. Preserve source task identifiers, labels, commands, paths, JSON keys, enum values, APIs, code identifiers, and Beads IDs in their canonical form.
+Write human-review Markdown artifacts in the language requested by the user or CLI prompt. Default to English when no language policy is provided. This includes generated `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, handoff prose, and generated `bd.tasks` title, description, and acceptance criteria fields. Preserve source task identifiers, labels, commands, paths, JSON keys, enum values, APIs, code identifiers, and Beads IDs in their canonical form.
 
 ## Source preservation
 
@@ -18,6 +18,8 @@ The original Beads task is the source of truth for the request. Preserve:
 - status and owner information if present
 
 Do not overwrite or reinterpret those fields without saying so in the plan.
+
+Source preservation does not override the language policy. Keep raw source text in `bd-source.json` and source metadata such as `source.title`; write generated interpretation, scope, acceptance criteria, and handoff `bd.*` prose in the requested language.
 
 ## Handoff semantics
 

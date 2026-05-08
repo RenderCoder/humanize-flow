@@ -22,6 +22,8 @@ Optional labels:
 
 Existing tasks imported with `humanize-flow-bd-planner` do not need to be relabeled before execution, because the handoff records their `bd_id`. Adding `humanize-flow` and the slug labels is still helpful for queue visibility if your project policy allows it.
 
+Generated Beads prose follows `humanize-flow i18n`: new-request epic/task titles, descriptions, and acceptance criteria use the configured workflow language. Imported Beads source text is preserved in `bd-source.json`, but generated planning and handoff task prose should still use the configured language.
+
 ## New-request materialization
 
 The standard planner prepares Beads tasks inside the handoff manifest. After approval, run:

@@ -2,6 +2,8 @@
 
 Humanize Flow uses Beads (`bd`) as the executable task graph.
 
+Generated Beads titles, descriptions, and acceptance criteria are human-facing prose. Follow the requested Humanize Flow language policy for them, while keeping labels, IDs, dependency keys, commands, paths, and code identifiers canonical.
+
 ## Labels
 
 Every Humanize Flow issue should include:

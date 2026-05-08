@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.3.0"
+HF_VERSION="0.4.0"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-opus-4-7"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"
@@ -39,6 +39,8 @@ Commands:
   run BD_ID_OR_SLUG [options]  Run Claude Code worker for one Beads task.
   run-next                     Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
   review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
+  review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE] [--review FILE]
+                               Merge human review/test feedback into a new Codex review report.
   commit [--yes]               Use Codex to select changes, write a Lore message, and commit.
   push [--remote NAME]         Push the current branch, prompting for a remote when needed.
   pr [options]                 Use Codex to draft a professional PR and create it with GitHub CLI.
@@ -70,6 +72,7 @@ Examples:
   humanize-flow approve undo-redo --materialize-bd
   humanize-flow run-next
   humanize-flow review bd-a1b2
+  humanize-flow review-feedback bd-a1b2
   humanize-flow commit
   humanize-flow push
   humanize-flow pr --base main
@@ -258,7 +261,8 @@ language_instruction() {
   cat <<EOF
 Language policy:
 - Write human-facing generated artifacts in $name (language code: $lang), unless the user explicitly requests a different language in this run.
-- This applies to request docs, plans, acceptance criteria, Beads task titles/descriptions, implementation summaries, review reports, and commit message prose.
+- This applies to Markdown artifacts (request.md, plan.md, acceptance.md, bd-plan.md, questions.md), handoff prose fields (summary, assumptions, open_questions, bd.epic.title, bd.epic.description, bd.tasks[].title, bd.tasks[].description, bd.tasks[].acceptance_criteria), materialized Beads epic/task titles, descriptions, and embedded acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose.
+- For existing Beads tasks, preserve raw source content in bd-source.json and source.* fields, but write generated interpretation, scope, plan, acceptance criteria, and handoff bd.* prose in $name.
 - Keep machine-readable literals in canonical form: JSON keys, enum values, labels, file paths, commands, API names, package names, code identifiers, and Beads IDs.
 EOF
 }
@@ -733,6 +737,7 @@ Follow the humanize-flow-planner skill exactly:
 - If this is non-interactive and key ambiguity remains, write docs/humanize-flow/$slug/questions.md and stop with a concise summary.
 - Do not modify implementation code.
 - Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Write all generated Markdown and handoff prose, including bd-plan.md and Beads epic/task titles, descriptions, and acceptance criteria, in the configured language from the language policy above.
 - Keep the handoff in state=draft and approval.status=pending unless the user explicitly approves in-session.
 - Prepare Beads tasks in the handoff. Materialize them only after explicit human approval.
 EOF
@@ -855,7 +860,9 @@ Follow the humanize-flow-bd-planner skill exactly:
 - Do not invoke Claude Code.
 - Do not create duplicate Beads tasks.
 - Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Write all generated Markdown and handoff prose, including bd-plan.md and generated bd.tasks title, description, and acceptance criteria fields, in the configured language from the language policy above.
 - Preserve $source_file as bd-source.json and reference it from the handoff artifacts map.
+- Preserve source task text in bd-source.json/source metadata only; do not copy English source prose into generated plan or handoff bd.* prose when the configured language is different.
 - In the handoff, set source.type=beads, source.bd_id=$bd_id, bd.materialized=true, and execution.current_bd_id=$bd_id.
 - Keep the handoff in state=draft and approval.status=pending unless the user explicitly approves in-session.
 - The normal next commands are: humanize-flow approve $slug ; humanize-flow run $bd_id ; humanize-flow review $bd_id
@@ -892,7 +899,7 @@ path = sys.argv[1]
 with open(path, encoding='utf-8') as f:
     data = json.load(f)
 data['state'] = 'approved'
-data['updated_at'] = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 approval = data.setdefault('approval', {})
 approval['required'] = True
 approval['status'] = 'approved'
@@ -909,13 +916,14 @@ PY
 
 cmd_materialize_bd() {
   require_git_repo
-  local slug file
+  local slug file lang
   slug="${1:-}"; [ -n "$slug" ] || die "Usage: humanize-flow materialize-bd SLUG"
   file="$(handoff_path "$slug")"
   [ -f "$file" ] || die "handoff not found: $file"
   command_exists bd || die "bd CLI not found. Install Beads or run without --materialize-bd."
-  python3 - "$file" <<'PY'
-import json, subprocess, sys, datetime, shlex
+  lang="$(language_default)"
+  HUMANIZE_FLOW_LANGUAGE_EFFECTIVE="$lang" python3 - "$file" <<'PY'
+import json, os, subprocess, sys, datetime, shlex
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -952,29 +960,56 @@ def find_id(obj):
                 return found
     return None
 
+lang = os.environ.get('HUMANIZE_FLOW_LANGUAGE_EFFECTIVE', 'en')
+TEXT = {
+    'en': {
+        'context_header': 'Humanize Flow context:',
+        'handoff': 'Handoff',
+        'request': 'Request',
+        'plan': 'Plan',
+        'acceptance': 'Acceptance',
+        'bd_plan': 'Beads plan',
+        'task_fallback': 'Humanize Flow task',
+        'epic_fallback': 'Humanize Flow epic',
+    },
+    'zh': {
+        'context_header': 'Humanize Flow 上下文:',
+        'handoff': 'Handoff',
+        'request': '需求',
+        'plan': '计划',
+        'acceptance': '验收标准',
+        'bd_plan': 'Beads 计划',
+        'task_fallback': 'Humanize Flow 任务',
+        'epic_fallback': 'Humanize Flow Epic',
+    },
+}.get(lang, {})
+
+def text(key):
+    return TEXT.get(key) or TEXT.get('en', {}).get(key) or key
+
 def artifact_context():
     artifacts = data.get('artifacts') or {}
     slug = data.get('slug') or path.stem
     entries = [
-        ('Handoff', f'.humanize-flow/handoffs/{slug}.json'),
-        ('Request', artifacts.get('request')),
-        ('Plan', artifacts.get('plan')),
-        ('Acceptance', artifacts.get('acceptance')),
-        ('Beads plan', artifacts.get('bd_plan')),
+        (text('handoff'), f'.humanize-flow/handoffs/{slug}.json'),
+        (text('request'), artifacts.get('request')),
+        (text('plan'), artifacts.get('plan')),
+        (text('acceptance'), artifacts.get('acceptance')),
+        (text('bd_plan'), artifacts.get('bd_plan')),
     ]
-    lines = ['Humanize Flow context:']
+    lines = [text('context_header')]
     for label, value in entries:
         if value:
             lines.append(f'- {label}: `{value}`')
     return '\n'.join(lines)
 
 def create_item(item, parent_id=None):
-    title = item.get('title') or item.get('key') or 'Humanize Flow task'
+    title = item.get('title') or item.get('key') or text('task_fallback')
     typ = item.get('type') or 'task'
     priority = str(item.get('priority', 2))
     desc = item.get('description') or ''
     context = artifact_context()
-    if 'Humanize Flow context:' not in desc:
+    if 'Humanize Flow context:' not in desc and 'Humanize Flow 上下文:' not in desc:
         desc = desc.rstrip()
         if desc:
             desc += '\n\n'
@@ -998,7 +1033,7 @@ def create_item(item, parent_id=None):
     item['bd_id'] = bid
     return bid
 
-epic = bd.setdefault('epic', {'key': 'epic', 'title': data.get('summary') or data.get('slug') or 'Humanize Flow epic', 'type': 'epic', 'priority': 1, 'labels': []})
+epic = bd.setdefault('epic', {'key': 'epic', 'title': data.get('summary') or data.get('slug') or text('epic_fallback'), 'type': 'epic', 'priority': 1, 'labels': []})
 epic_id = create_item(epic, None)
 key_to_id = {epic.get('key', 'epic'): epic_id}
 
@@ -1017,7 +1052,7 @@ for task in tasks:
 bd['materialized'] = True
 data['bd'] = bd
 data['state'] = 'approved'
-data['updated_at'] = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 print(f'Materialized {len(tasks)} task(s) under epic {epic_id}.')
 PY
@@ -1133,6 +1168,37 @@ for task in bd.get('tasks') or []:
         print(task['bd_id'])
         raise SystemExit(0)
 raise SystemExit(1)
+PY
+}
+
+latest_review_for_slug() {
+  local slug review_dir
+  slug="$1"
+  review_dir="$(docs_dir)/$slug/reviews"
+  [ -d "$review_dir" ] || return 1
+  find "$review_dir" -maxdepth 1 -type f -name '*.md' -print | sort | tail -n 1
+}
+
+set_handoff_artifact() {
+  local slug key value file
+  slug="$1"; key="$2"; value="$3"
+  file="$(handoff_path "$slug")"
+  [ -f "$file" ] || return 0
+  python3 - "$file" "$key" "$value" <<'PY'
+import json, sys, datetime
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(0)
+artifacts = data.setdefault('artifacts', {})
+artifacts[key] = value
+data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 PY
 }
 
@@ -1512,6 +1578,8 @@ Follow the humanize-flow-reviewer skill exactly:
 - Do not implement fixes.
 - Produce a review in Markdown using verdict: pass, changes_requested, or blocked.
 - Include blocking findings with severity labels [P0]..[P3].
+- If the verdict is pass, include a "Human verification guide" section with concrete manual test steps and a checkbox checklist for the human to complete before commit/push.
+- If the verdict is changes_requested or blocked, include a "Human correction options" section explaining what context corrections, exclusions, or scope clarifications could change the verdict.
 - State exactly what must happen before the task can close.
 EOF
 
@@ -1519,7 +1587,151 @@ EOF
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
   run_codex_exec "$prompt_text" | tee "$review_file"
+  if [ -n "$slug" ]; then
+    set_handoff_artifact "$slug" "latest_review" "$review_file"
+  fi
   info "review written: $review_file"
+}
+
+cmd_review_feedback() {
+  require_git_repo
+  local ref="" note="" from_file="" review_file="" bd_id slug file run_dir prompt_file feedback_file output_file review_dir base prompt_text safe_ref editor
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --note) shift; note="${1:-}" ;;
+      --from) shift; from_file="${1:-}" ;;
+      --review) shift; review_file="${1:-}" ;;
+      --help|-h|help)
+        cat <<'EOF'
+Usage:
+  humanize-flow review-feedback BD_ID_OR_SLUG
+  humanize-flow review-feedback BD_ID_OR_SLUG --note "manual test feedback"
+  humanize-flow review-feedback BD_ID_OR_SLUG --from docs/manual-test-notes.md
+  humanize-flow review-feedback BD_ID_OR_SLUG --review docs/.../reviews/latest.md --note "..."
+
+Merges human manual-test feedback or review corrections with the latest Codex
+review and writes a new consolidated review report. The consolidated report
+may keep the verdict, change pass to changes_requested, or change
+changes_requested/blocked to pass when the human correction changes the review
+scope or evidence.
+
+Without --note or --from, opens ${VISUAL:-${EDITOR:-vi}} for writing feedback
+and continues after the editor exits.
+EOF
+        return 0 ;;
+      --*) die "Unknown review-feedback option: $1" ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected review-feedback argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+
+  [ -n "$ref" ] || die "Usage: humanize-flow review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE]"
+  if [ -n "$from_file" ] && [ ! -f "$from_file" ]; then
+    die "feedback file not found: $from_file"
+  fi
+  command_exists codex || die "codex CLI not found."
+
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then
+    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
+  fi
+  if [ -z "${bd_id:-}" ]; then bd_id="$ref"; fi
+  if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
+  if [ -z "$review_file" ] && [ -n "$slug" ]; then
+    review_file="$(latest_review_for_slug "$slug" 2>/dev/null || true)"
+  fi
+  [ -n "$review_file" ] || die "No prior review found. Pass --review FILE or run humanize-flow review first."
+  [ -f "$review_file" ] || die "review file not found: $review_file"
+
+  run_dir="$(state_dir)/runs/$(timestamp)-review-feedback-$ref"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/codex-review-feedback-prompt.md"
+  feedback_file="$run_dir/human-feedback.md"
+  review_dir="$(docs_dir)/${slug:-unknown}/reviews"
+  mkdir -p "$review_dir"
+  safe_ref="$(slugify "$ref")"
+  output_file="$review_dir/$(timestamp)-$safe_ref-human-feedback.md"
+  base="$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD 2>/dev/null || printf 'HEAD')"
+
+  if [ -n "$note" ] || [ -n "$from_file" ]; then
+    {
+      if [ -n "$note" ]; then
+        printf '%s\n' "$note"
+      fi
+      if [ -n "$from_file" ]; then
+        [ -z "$note" ] || printf '\n'
+        cat "$from_file"
+      fi
+    } > "$feedback_file"
+  else
+    if [ ! -t 0 ] && [ -z "${VISUAL:-}" ] && [ -z "${EDITOR:-}" ]; then
+      die "review-feedback needs --note/--from in non-interactive mode unless VISUAL or EDITOR is set."
+    fi
+    cat > "$feedback_file" <<'EOF'
+# Write manual-test feedback or review correction notes below.
+# Lines starting with # are ignored.
+# Save and quit the editor to continue.
+
+EOF
+    editor="${VISUAL:-${EDITOR:-vi}}"
+    info "opening editor for human feedback: $editor"
+    # shellcheck disable=SC2086
+    $editor "$feedback_file" || die "editor exited unsuccessfully"
+    python3 - "$feedback_file" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = [
+    line.rstrip()
+    for line in path.read_text(encoding='utf-8').splitlines()
+    if not line.lstrip().startswith('#')
+]
+text = '\n'.join(lines).strip()
+path.write_text((text + '\n') if text else '', encoding='utf-8')
+PY
+  fi
+  [ -s "$feedback_file" ] || die "human feedback is empty; aborted."
+
+  cat > "$prompt_file" <<EOF
+$(reviewer_skill_hint)
+
+You are updating a Humanize Flow review with human manual-test feedback or human correction notes.
+
+Task id: $bd_id
+Handoff slug: ${slug:-unknown}
+Handoff path: ${file:-not-found}
+Prior review: $review_file
+Human feedback: $feedback_file
+Updated review output path requested by caller: $output_file
+Suggested git base: $base
+
+$(language_instruction)
+
+Follow the humanize-flow-reviewer skill and these additional rules:
+- Read the Beads task, handoff, plan, acceptance criteria, git status, diff, prior review, and human feedback.
+- Treat human feedback as additional evidence or scope correction, not as an automatic override.
+- Reconcile disagreements explicitly: state whether the feedback changes the review scope, invalidates a prior finding, adds a new finding, or supplies missing verification evidence.
+- Re-evaluate the final verdict: pass, changes_requested, or blocked.
+- If human feedback says a file or diff should be excluded, verify that exclusion against the approved plan/handoff before accepting it.
+- If the updated verdict is pass, include a "Human verification guide" section with concrete manual test steps and a checkbox checklist to complete before commit/push.
+- If the updated verdict is changes_requested or blocked, include the exact next command to return to the worker, usually: humanize-flow run $bd_id
+- Preserve links/paths to the prior review and human feedback artifact.
+- Do not implement fixes.
+EOF
+
+  info "review feedback prompt: $prompt_file"
+  info "human feedback saved: $feedback_file"
+  prompt_text="$(cat "$prompt_file")"
+  # shellcheck disable=SC2086
+  run_codex_exec "$prompt_text" | tee "$output_file"
+  if [ -n "$slug" ]; then
+    set_handoff_artifact "$slug" "latest_review" "$output_file"
+    set_handoff_artifact "$slug" "latest_human_feedback" "$feedback_file"
+  fi
+  info "updated review written: $output_file"
 }
 
 commit_failure_looks_hook_related() {
@@ -2099,6 +2311,7 @@ main() {
     run) cmd_run "$@" ;;
     run-next) cmd_run_next "$@" ;;
     review) cmd_review "$@" ;;
+    review-feedback) cmd_review_feedback "$@" ;;
     commit) cmd_commit "$@" ;;
     push) cmd_push "$@" ;;
     pr) cmd_pr "$@" ;;

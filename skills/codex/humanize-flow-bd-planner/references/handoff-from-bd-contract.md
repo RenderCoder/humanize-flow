@@ -2,6 +2,8 @@
 
 A handoff created from an existing Beads task must be valid against `assets/handoff.schema.json` and must make the source task obvious.
 
+Follow the requested language policy for generated prose fields, including `summary`, `assumptions`, `open_questions`, `bd.tasks[].title`, `bd.tasks[].description`, and `bd.tasks[].acceptance_criteria`. Preserve original Beads text only in source-trace fields such as `source.title` and `bd-source.json`.
+
 ## Required fields for imported Beads tasks
 
 Use these fields in addition to the normal handoff fields:

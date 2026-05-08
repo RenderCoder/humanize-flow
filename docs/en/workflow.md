@@ -37,7 +37,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese. Keep machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers in their canonical form.
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese. This includes `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria. Keep machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers in their canonical form.
 
 For non-interactive use:
 
@@ -65,7 +65,7 @@ CLI flow:
 humanize-flow plan-from-bd <bd-id> --slug <slug>
 ```
 
-This path captures `bd show <bd-id> --json` as `bd-source.json` and writes a handoff that links the existing task. It normally skips Beads materialization because the task already exists.
+This path captures `bd show <bd-id> --json` as `bd-source.json` and writes a handoff that links the existing task. Raw source task text remains in `bd-source.json`, while generated request, plan, acceptance, `bd-plan.md`, and handoff task prose follow the configured workflow language. It normally skips Beads materialization because the task already exists.
 
 ## 3. Approve and materialize Beads tasks
 
@@ -114,6 +114,18 @@ The reviewer checks the implementation against the approved artifacts and return
 - `blocked`
 
 Missing handoff, plan, or acceptance evidence should produce `blocked`, not `pass`.
+
+The CLI does not enable yolo or full-access permissions for Codex review by default. Review should rely on read access to the repository, handoff, plan, acceptance criteria, Beads task, and diff; if that evidence cannot be read under the active Codex sandbox, the correct result is `blocked`.
+
+When the verdict is `pass`, the report includes a human verification guide. Complete its manual test steps and checklist before final git delivery. A pass from Codex means the code satisfies the reviewed contract; it is not a command to commit immediately.
+
+If manual testing finds a problem, or if a human decides that a Codex finding is based on the wrong scope or missing context, merge that feedback into a new review. With no `--note` or `--from`, the command opens your editor and continues after you save and quit:
+
+```bash
+humanize-flow review-feedback <bd-id>
+```
+
+The updated review combines the prior Codex review with the human feedback and re-evaluates the verdict. It can turn `pass` into `changes_requested`, or turn `changes_requested`/`blocked` into `pass` when the feedback supplies valid scope correction or missing evidence.
 
 ## 6. Iterate or close
 

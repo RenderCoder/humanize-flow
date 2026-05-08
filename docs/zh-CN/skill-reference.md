@@ -22,7 +22,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-面向人工审核的 Markdown 产物遵循工作流语言配置，默认使用英文。JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符等机器可读字面量保持原始形式。
+面向人工审核的 Markdown 产物和生成的 Beads prose 遵循工作流语言配置，默认使用英文。这包括 `bd-plan.md`、handoff prose，以及 Beads epic/task 标题、描述和验收标准。JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符等机器可读字面量保持原始形式。
 
 ## `humanize-flow-bd-planner`
 
@@ -53,7 +53,7 @@ docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-面向人工审核的 Markdown 产物遵循工作流语言配置，默认使用英文。来源任务 ID 和机器可读字面量保持原始形式。
+面向人工审核的 Markdown 产物和生成的 handoff 任务 prose 遵循工作流语言配置，默认使用英文。原始任务文本保存在 `bd-source.json`；来源任务 ID 和机器可读字面量保持原始形式。
 
 关键 handoff 字段：
 

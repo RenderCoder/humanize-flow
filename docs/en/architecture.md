@@ -19,11 +19,11 @@ humanize-flow separates planning, execution, and review so that multi-agent codi
 
 Markdown files under `docs/humanize-flow/<slug>/` are for humans. They explain the request, plan, acceptance criteria, implementation summaries, and reviews.
 
-Human-facing generated artifacts default to English and can be switched with `humanize-flow i18n <lang>`. Technical literals that other tools consume, such as paths, commands, API names, JSON keys, enum values, labels, Beads IDs, and code identifiers, remain canonical.
+Human-facing generated artifacts default to English and can be switched with `humanize-flow i18n <lang>`. This includes Markdown artifacts such as `bd-plan.md`, handoff prose, Beads titles/descriptions/acceptance criteria, implementation summaries, reviews, pull request text, and commit message prose. Technical literals that other tools consume, such as paths, commands, API names, JSON keys, enum values, labels, Beads IDs, and code identifiers, remain canonical.
 
 ### Beads layer
 
-Beads stores the executable task graph. Agents use `bd ready --json`, `bd show --json`, and dependencies to select safe next work. Existing Beads tasks can be imported into the workflow with `humanize-flow-bd-planner` without creating duplicate issues.
+Beads stores the executable task graph. Agents use `bd ready --json`, `bd show --json`, and dependencies to select safe next work. Existing Beads tasks can be imported into the workflow with `humanize-flow-bd-planner` without creating duplicate issues. Imported source text is preserved as source data, while generated planning and handoff task prose follows the configured workflow language.
 
 ### Handoff layer
 
