@@ -1,8 +1,30 @@
 # humanize Integration
 
-humanize/RLCR is optional in humanize-flow. It is most useful during implementation, not during planning.
+humanize/RLCR is required by default in humanize-flow worker runs. It is used during implementation, not during planning.
 
-## When to use humanize
+## Modes
+
+- `required`: default. `humanize-flow run` checks that humanize is installed and the Claude prompt requires starting RLCR from the approved plan before code edits.
+- `auto`: use humanize for complex tasks when available, but allow direct implementation when unavailable or inappropriate.
+- `off`: disable humanize for this run.
+
+Configure the default:
+
+```bash
+humanize-flow config set claude.humanize required
+humanize-flow config set claude.humanize auto
+humanize-flow config set claude.humanize off
+```
+
+Override one run:
+
+```bash
+humanize-flow run <bd-id> --humanize
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
+```
+
+## When `auto` should use humanize
 
 Use it when a worker task is complex:
 
@@ -12,7 +34,7 @@ Use it when a worker task is complex:
 - likely review iteration,
 - architectural sensitivity.
 
-## When not to use humanize
+## When `auto` may skip humanize
 
 Skip it when:
 
@@ -23,7 +45,7 @@ Skip it when:
 
 ## Fallback behavior
 
-If humanize is not available, the worker should emulate the discipline:
+In `required`, there is no silent fallback: stop and report the blocker. In `auto`, if humanize is not available, the worker should emulate the discipline:
 
 1. implement from the approved plan,
 2. run targeted tests,

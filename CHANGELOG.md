@@ -2,6 +2,24 @@
 
 All notable changes to humanize-flow will be documented in this file.
 
+## Unreleased
+
+## [0.5.0] - 2026-05-09
+
+### Added
+
+- Add `humanize-flow run --yolo` with a Claude Code auto-permission plus Codex yolo review loop, configurable with `--max-round`.
+- Add `claude.humanize` worker mode with default `required`, plus `HUMANIZE_FLOW_CLAUDE_HUMANIZE`, `--humanize`, `--humanize-mode`, and `--no-humanize` overrides.
+
+### Changed
+
+- Default Claude Code worker model to `claude-sonnet-4-6` for new installs or unset `claude.model` configuration.
+- Default Codex review and review-feedback runs to yolo mode with `--dangerously-bypass-approvals-and-sandbox`, with `review.yolo`, `HUMANIZE_FLOW_REVIEW_YOLO`, `--no-yolo`, `review.sandbox`, `HUMANIZE_FLOW_REVIEW_SANDBOX`, and `--sandbox` overrides.
+
+### Fixed
+
+- Use Python 3-compatible UTC timestamp generation instead of requiring `datetime.UTC`.
+
 ## [0.4.0] - 2026-05-08
 
 ### Changed

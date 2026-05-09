@@ -6,7 +6,7 @@
 Codex planner → human approval → Claude Code worker → Codex reviewer
 ```
 
-It is designed for developers who want Codex to understand and plan work, Claude Code to implement it, Beads (`bd`) to preserve task memory, and optional humanize/RLCR loops to improve implementation quality.
+It is designed for developers who want Codex to understand and plan work, Claude Code to implement it, Beads (`bd`) to preserve task memory, and required-by-default humanize/RLCR loops to improve implementation quality.
 
 ## Why this exists
 
@@ -14,7 +14,7 @@ AI coding tools are powerful, but complex work fails when planning, implementati
 
 - **Codex plans**: discusses requirements when needed, writes Markdown plans, prepares Beads tasks, and produces a handoff manifest.
 - **Humans approve**: implementation does not begin until the handoff is approved.
-- **Claude Code implements**: executes one approved task at a time, optionally using humanize/RLCR for iterative review.
+- **Claude Code implements**: executes one approved task at a time, using humanize/RLCR by default for iterative review.
 - **Codex reviews**: checks the final diff against the approved plan and acceptance criteria.
 - **The CLI orchestrates**: scripts coordinate tools, files, state, logs, and recovery.
 
@@ -75,6 +75,7 @@ After reviewing the plan:
 ```bash
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
+humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
 humanize-flow review-feedback <bd-id>
 humanize-flow commit
@@ -82,11 +83,13 @@ humanize-flow push
 humanize-flow pr
 ```
 
-Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-opus-4-7`, and permission mode `auto`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`; `review` does not enable yolo or full-access mode by default. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
+Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-sonnet-4-6`, permission mode `auto`, and `claude.humanize=required`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`; review and review-feedback default to yolo mode with Codex `--dangerously-bypass-approvals-and-sandbox` and can be lowered with `review.yolo=false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, `--no-yolo`, `review.sandbox`, `HUMANIZE_FLOW_REVIEW_SANDBOX`, or `--sandbox`. With `required`, the worker prompt requires Claude to start humanize/RLCR from the approved plan before editing code; if humanize is unavailable, lower the mode with `--humanize-mode auto`, `--no-humanize`, `HUMANIZE_FLOW_CLAUDE_HUMANIZE`, or `humanize-flow config set claude.humanize <mode>`. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
+
+Use `humanize-flow run <bd-id> --yolo` for an approved handoff when you want the CLI to force Claude Code permission mode `auto`, force Codex review yolo mode, and repeat Claude correction plus Codex review until the review passes or the 3-round default limit is reached. Override the limit with `--max-round N`.
 
 After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language, saves the draft under `.humanize-flow/runs/`, and creates the PR with `gh pr create`.
 
@@ -155,16 +158,16 @@ Recommended workflow tools:
 - Codex CLI
 - Claude Code CLI
 - Beads (`bd`)
-- humanize plugin or skills, optional but useful for complex execution
+- humanize plugin or skills, required by default for worker execution
 
 ## Safety defaults
 
 - The planner does not edit implementation code.
 - The worker refuses unapproved handoffs.
 - The reviewer does not implement fixes.
-- The CLI does not default to full-access sandbox modes.
-- Codex review does not enable yolo by default; if it cannot read the needed evidence under the active sandbox, the review should block.
-- Dangerous permissions should be used only in trusted, isolated environments.
+- Planner, commit, PR, and worker flows do not default to full Codex sandbox bypass.
+- Codex review and review-feedback default to yolo mode with `--dangerously-bypass-approvals-and-sandbox` to avoid blocking the review loop; lower it with `review.yolo=false` or `--no-yolo` when your environment requires stricter isolation.
+- Dangerous permissions should be used only in trusted, externally isolated environments.
 
 ## Documentation
 

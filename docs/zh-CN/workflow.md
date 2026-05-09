@@ -101,6 +101,23 @@ humanize-flow run <bd-id>
 
 Worker 会读取 Beads 任务、已批准 handoff、plan 和 acceptance criteria。Beads 文本可以刻意保持简洁；详细执行契约在 Markdown 产物里。如果缺少已批准 handoff、`plan.md` 或 `acceptance.md`，worker 应该停止，而不是只根据 Beads 任务实现。
 
+默认 worker 使用 `claude.humanize=required`。CLI 会在启动前检查 humanize 命令、Claude 插件或已安装的 Codex humanize skill 脚本，生成的 Claude prompt 会要求在改代码前从已批准 plan 启动 humanize/RLCR。如果某个任务所在环境无法运行 humanize，需要显式降低模式：
+
+```bash
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
+humanize-flow config set claude.humanize auto
+```
+
+对于已批准的 handoff，也可以用 YOLO 模式自动运行实现和 review 闭环：
+
+```bash
+humanize-flow run <bd-id> --yolo
+humanize-flow run <bd-id> --yolo --max-round 5
+```
+
+YOLO 模式会强制 Claude Code 权限模式为 `auto`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认最多 3 轮。
+
 ## 5. 用 Codex 审查
 
 ```bash
@@ -115,7 +132,7 @@ Reviewer 会对照批准的产物进行审查，并返回：
 
 缺少 handoff、plan 或 acceptance 证据时应该返回 `blocked`，而不是 `pass`。
 
-CLI 默认不会为 Codex review 开启 yolo 或 full-access 权限。Review 应依赖对仓库、handoff、plan、acceptance criteria、Beads 任务和 diff 的读取权限；如果当前 Codex sandbox 无法读取这些证据，正确结果是 `blocked`。
+Codex review 和 review-feedback 默认使用 yolo 模式，也就是传给 Codex `--dangerously-bypass-approvals-and-sandbox`，避免权限确认提示阻塞循环。需要更严格隔离时，可用 `humanize-flow config set review.yolo false`、`HUMANIZE_FLOW_REVIEW_YOLO=false` 或 `--no-yolo`；然后再用 `humanize-flow config set review.sandbox <mode>`、`HUMANIZE_FLOW_REVIEW_SANDBOX` 或 `--sandbox <mode>` 控制 sandbox。
 
 当 verdict 是 `pass` 时，报告会包含人类验证指南。最终 git 交付前，先完成人工测试步骤和检查清单。Codex pass 表示代码满足被审查的契约；它不是立即提交的命令。
 

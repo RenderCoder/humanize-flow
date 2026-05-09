@@ -104,11 +104,25 @@ Run Claude Code worker for one Beads task.
 
 ```bash
 humanize-flow run <bd-id>
+humanize-flow run <bd-id> --yolo
+humanize-flow run <bd-id> --yolo --max-round 5
 humanize-flow run <bd-id> --interactive
-humanize-flow run <bd-id> --model claude-opus-4-7
+humanize-flow run <bd-id> --model claude-sonnet-4-6
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
 ```
 
-Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-opus-4-7`, and permission mode `auto`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream.
+Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-sonnet-4-6`, permission mode `auto`, and `claude.humanize=required`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream.
+
+Humanize modes are:
+
+- `required`: default. The CLI preflights humanize availability and the worker prompt requires Claude to start humanize/RLCR from the approved plan before editing code. If humanize cannot start, Claude must stop and report the blocker.
+- `auto`: use humanize/RLCR for complex work when available; tiny or incompatible runs may implement directly while preserving Codex review.
+- `off`: do not start humanize/RLCR.
+
+Override one run with `--humanize`, `--humanize-mode required|auto|off`, or `--no-humanize`. Set the global default with `humanize-flow config set claude.humanize <mode>` or override one command with `HUMANIZE_FLOW_CLAUDE_HUMANIZE`.
+
+`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. Each round forces Claude Code permission mode `auto`, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds.
 
 Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 
@@ -131,12 +145,18 @@ humanize-flow config show
 humanize-flow config get language
 humanize-flow config set language zh
 humanize-flow config get claude.model
-humanize-flow config set claude.model claude-opus-4-7
+humanize-flow config set claude.model claude-sonnet-4-6
 humanize-flow config set claude.permission_mode auto
+humanize-flow config get claude.humanize
+humanize-flow config set claude.humanize required
 humanize-flow config get codex.model
 humanize-flow config set codex.model gpt-5.5
 humanize-flow config get codex.reasoning_effort
 humanize-flow config set codex.reasoning_effort high
+humanize-flow config get review.yolo
+humanize-flow config set review.yolo false
+humanize-flow config get review.sandbox
+humanize-flow config set review.sandbox workspace-write
 ```
 
 Global config is stored in `${XDG_CONFIG_HOME:-$HOME/.config}/humanize-flow/config.json`. Environment variables still override config values for a single command.
@@ -162,11 +182,13 @@ Run Codex reviewer for one Beads task.
 ```bash
 humanize-flow review <bd-id>
 humanize-flow review <handoff-slug>
+humanize-flow review <bd-id> --no-yolo
+humanize-flow review <bd-id> --sandbox workspace-write
 ```
 
 Use the actual Beads task id when possible. Handoff slugs are also accepted and resolved to the matching handoff before the review path is chosen.
 
-The review command does not enable a yolo or full-access mode by default; it runs `codex exec` with your normal Codex configuration and any Humanize Flow Codex model/reasoning overrides. Review should be read-only. If the active Codex sandbox cannot read the repository files, handoff, plan, acceptance criteria, or diff it needs, the reviewer should return `blocked` rather than passing with incomplete evidence.
+Review defaults to yolo mode and passes Codex `--dangerously-bypass-approvals-and-sandbox` to avoid approval prompts blocking the review loop. Disable that default with `humanize-flow config set review.yolo false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, or a one-run `--no-yolo`. When yolo is disabled, change the sandbox with `humanize-flow config set review.sandbox <mode>` or `HUMANIZE_FLOW_REVIEW_SANDBOX`; override one run with `--sandbox <mode>`. Passing `--sandbox` also disables yolo for that run. Supported modes are `read-only`, `workspace-write`, and `danger-full-access`.
 
 When the verdict is `pass`, the review report includes a human verification guide with manual test steps and a checklist to complete before commit/push. When the verdict is `changes_requested` or `blocked`, the report includes human correction options that can be fed into `review-feedback`.
 
@@ -179,9 +201,11 @@ humanize-flow review-feedback <bd-id>
 humanize-flow review-feedback <bd-id> --note "Manual test found the empty state still overlaps."
 humanize-flow review-feedback <bd-id> --from docs/manual-test-notes.md
 humanize-flow review-feedback <handoff-slug> --review docs/humanize-flow/<slug>/reviews/<file>.md --from docs/manual-test-notes.md
+humanize-flow review-feedback <bd-id> --no-yolo
+humanize-flow review-feedback <bd-id> --sandbox workspace-write
 ```
 
-Without `--note` or `--from`, the command opens `${VISUAL:-${EDITOR:-vi}}` so the human can write feedback directly. It saves the human feedback under `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`, reads the prior review, handoff, plan, acceptance criteria, git status, and diff, then writes a consolidated review under `docs/humanize-flow/<slug>/reviews/`. Codex must re-evaluate the final verdict after considering the human feedback; feedback can add a new finding, supply missing verification evidence, correct review scope, or invalidate a prior finding.
+Without `--note` or `--from`, the command opens `${VISUAL:-${EDITOR:-vi}}` so the human can write feedback directly. It saves the human feedback under `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`, reads the prior review, handoff, plan, acceptance criteria, git status, and diff, then writes a consolidated review under `docs/humanize-flow/<slug>/reviews/`. Codex must re-evaluate the final verdict after considering the human feedback; feedback can add a new finding, supply missing verification evidence, correct review scope, or invalidate a prior finding. `review-feedback` uses the same review yolo default, `--no-yolo`, and `--sandbox` override behavior as `review`.
 
 Options:
 
@@ -254,8 +278,11 @@ humanize-flow status
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | Extra arguments for `claude -p`. |
 | `HUMANIZE_FLOW_CLAUDE_MODEL` | Override the configured Claude Code worker model. |
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | Override the configured Claude Code permission mode. |
+| `HUMANIZE_FLOW_CLAUDE_HUMANIZE` | Override Claude Code humanize mode (`required`, `auto`, or `off`). |
 | `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit/pr runs. |
+| `HUMANIZE_FLOW_REVIEW_YOLO` | Override whether review/review-feedback pass Codex `--dangerously-bypass-approvals-and-sandbox`. |
+| `HUMANIZE_FLOW_REVIEW_SANDBOX` | Override Codex sandbox for review/review-feedback runs. |
 | `HUMANIZE_FLOW_LANGUAGE` | Override generated artifact language for one command. |
 | `HUMANIZE_FLOW_CODEX_ARGS` | Extra arguments for `codex exec`. |
 | `HUMANIZE_FLOW_BIN_DIR` | Install location for the CLI. |

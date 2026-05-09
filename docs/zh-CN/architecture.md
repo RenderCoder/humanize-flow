@@ -46,6 +46,6 @@ draft
 
 嵌套 agent 会让权限、日志和失败恢复变复杂。humanize-flow 把跨 agent 调用保留在 CLI 里。Skills 定义行为，CLI 负责调度。
 
-## 可选 humanize 集成
+## 默认 required 的 humanize 集成
 
-humanize/RLCR 很适合实现阶段，尤其是多文件或高风险修改。它是可选项，因此即使没有安装 humanize，项目仍然可用。
+humanize/RLCR 是默认 worker 路径。`claude.humanize=required` 会让 `humanize-flow run` 在检测不到 humanize 集成时 fail closed，并要求 Claude 在改代码前启动 RLCR。若某个仓库或环境无法支持 humanize，团队可以把单次运行或全局默认值降为 `auto` 或 `off`。

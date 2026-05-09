@@ -106,4 +106,12 @@ Newer versions also accept the handoff slug, but older installed CLIs may only r
 
 ## humanize is unavailable
 
-The worker can still implement directly and request Codex review. humanize/RLCR is an enhancement, not a hard dependency.
+Worker runs default to `claude.humanize=required`, so `humanize-flow run` stops when no humanize command, Claude plugin, or installed Codex humanize skill script is detected.
+
+Install humanize, or explicitly lower the mode when you intend to proceed without it:
+
+```bash
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
+humanize-flow config set claude.humanize auto
+```

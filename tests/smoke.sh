@@ -15,6 +15,12 @@ test "$(bin/humanize-flow i18n)" = "en"
 test "$(HUMANIZE_FLOW_LANGUAGE=zh bin/humanize-flow i18n)" = "zh"
 bin/humanize-flow config show | grep -q 'codex.model: (codex default)'
 bin/humanize-flow config show | grep -q 'codex.reasoning_effort: (codex default)'
+bin/humanize-flow config show | grep -q 'claude.humanize: required'
+test "$(HUMANIZE_FLOW_CLAUDE_HUMANIZE=off bin/humanize-flow config get claude.humanize)" = "off"
+bin/humanize-flow config show | grep -q 'review.yolo: true'
+test "$(HUMANIZE_FLOW_REVIEW_YOLO=false bin/humanize-flow config get review.yolo)" = "false"
+bin/humanize-flow config show | grep -q 'review.sandbox: danger-full-access'
+test "$(HUMANIZE_FLOW_REVIEW_SANDBOX=workspace-write bin/humanize-flow config get review.sandbox)" = "workspace-write"
 mkdir -p "$TMP/fake-bin" "$TMP/repo"
 cat > "$TMP/fake-bin/bd" <<'BD'
 #!/usr/bin/env bash
@@ -53,7 +59,7 @@ JSON
 JSON
     ;;
   create)
-    printf '%s\n' "$*" > "$BD_CREATE_ARGS_CAPTURE"
+    printf '%s\n' "$@" > "$BD_CREATE_ARGS_CAPTURE"
     cat <<'JSON'
 {"id":"bd-hook-1","title":"Fix commit hook failure"}
 JSON
@@ -68,10 +74,22 @@ chmod +x "$TMP/fake-bin/bd"
 cat > "$TMP/fake-bin/claude" <<'CLAUDE'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -n "${CLAUDE_RUN_COUNT:-}" ]; then
+  count=0
+  if [ -f "$CLAUDE_RUN_COUNT" ]; then count="$(cat "$CLAUDE_RUN_COUNT")"; fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$CLAUDE_RUN_COUNT"
+fi
 printf '%s\n' "$*" > "$CLAUDE_ARGS_CAPTURE"
 printf '{"type":"result","subtype":"success","result":"ok"}\n'
 CLAUDE
 chmod +x "$TMP/fake-bin/claude"
+cat > "$TMP/fake-bin/humanize" <<'HUMANIZE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'fake humanize\n'
+HUMANIZE
+chmod +x "$TMP/fake-bin/humanize"
 cat > "$TMP/fake-bin/codex" <<'CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -85,6 +103,21 @@ case "$*" in
     ;;
   *"updating a Humanize Flow review with human manual-test feedback"*)
     printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
+    ;;
+  *"running the Humanize Flow reviewer for this repository"*)
+    if [ -n "${CODEX_REVIEW_COUNT:-}" ]; then
+      count=0
+      if [ -f "$CODEX_REVIEW_COUNT" ]; then count="$(cat "$CODEX_REVIEW_COUNT")"; fi
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$CODEX_REVIEW_COUNT"
+      if [ "$count" -eq 1 ]; then
+        printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nYOLO first review requested changes.\n'
+      else
+        printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO second review passed.\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
+      fi
+    else
+      printf 'fake review\n'
+    fi
     ;;
   *"drafting a professional GitHub pull request"*)
     case "$*" in
@@ -156,6 +189,11 @@ data = {
 }
 path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
 PY
+  mkdir -p docs/humanize-flow/imported-task
+  printf '# Request\n\nAdd undo redo support.\n' > docs/humanize-flow/imported-task/request.md
+  printf '# Plan\n\nImplement undo redo support.\n\n## Acceptance Criteria\n\n- Undo works.\n' > docs/humanize-flow/imported-task/plan.md
+  printf '# Acceptance\n\n- Undo works.\n' > docs/humanize-flow/imported-task/acceptance.md
+  printf '# Beads Plan\n\n- bd-1234\n' > docs/humanize-flow/imported-task/bd-plan.md
   test -f docs/humanize-flow/imported-task/bd-source.json
   grep -q 'Add undo redo support' docs/humanize-flow/imported-task/bd-source.json
   grep -R '\$humanize-flow-bd-planner' .humanize-flow/runs >/dev/null
@@ -183,13 +221,28 @@ PY
   grep -q 'Humanize Flow 上下文' "$TMP/bd-materialize-args.txt"
   grep -q '需求' "$TMP/bd-materialize-args.txt"
   grep -q 'Beads 计划' "$TMP/bd-materialize-args.txt"
+  mkdir -p docs/humanize-flow/imported-task/reviews
+  printf 'old review\n' > docs/humanize-flow/imported-task/reviews/20260507-000000-bd-1234.md
+  printf 'new review\n' > docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md
   CLAUDE_ARGS_CAPTURE="$TMP/claude-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
-  grep -q -- '--model claude-opus-4-7' "$TMP/claude-args.txt"
+  grep -q -- '--model claude-sonnet-4-6' "$TMP/claude-args.txt"
   grep -q -- '--permission-mode auto' "$TMP/claude-args.txt"
   grep -q -- '--output-format stream-json' "$TMP/claude-args.txt"
   grep -q -- '--include-partial-messages' "$TMP/claude-args.txt"
   grep -q -- '--include-hook-events' "$TMP/claude-args.txt"
   grep -q -- '--verbose' "$TMP/claude-args.txt"
+  grep -q 'Claude humanize mode: required' "$TMP/claude-args.txt"
+  grep -q 'Required humanize behavior:' "$TMP/claude-args.txt"
+  grep -q '/humanize:start-rlcr-loop docs/humanize-flow/imported-task/plan.md --yolo' "$TMP/claude-args.txt"
+  grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md' "$TMP/claude-args.txt"
+  grep -q 'Do not bulk-load docs/humanize-flow/imported-task/reviews/' "$TMP/claude-args.txt"
+  CLAUDE_ARGS_CAPTURE="$TMP/claude-no-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >/dev/null
+  grep -q 'Claude humanize mode: off' "$TMP/claude-no-humanize-args.txt"
+  "$ROOT/bin/humanize-flow" config set claude.humanize auto >/dev/null
+  test "$("$ROOT/bin/humanize-flow" config get claude.humanize)" = "auto"
+  CLAUDE_ARGS_CAPTURE="$TMP/claude-auto-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
+  grep -q 'Claude humanize mode: auto' "$TMP/claude-auto-humanize-args.txt"
+  "$ROOT/bin/humanize-flow" config set claude.humanize required >/dev/null
   HUMANIZE_FLOW_NONINTERACTIVE=1 CLAUDE_ARGS_CAPTURE="$TMP/claude-run-next-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run-next >/dev/null
   grep -q 'bd-1234' "$TMP/claude-run-next-args.txt"
   test "$(find .humanize-flow/runs -name claude-final.jsonl -print | wc -l | tr -d ' ')" -gt 0
@@ -197,10 +250,16 @@ PY
   CODEX_ARGS_CAPTURE="$TMP/codex-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
   test -f docs/humanize-flow/imported-task/reviews/"$(ls docs/humanize-flow/imported-task/reviews | tail -n 1)"
   test ! -d docs/humanize-flow/unknown/reviews
+  grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-args.txt"
+  ! grep -q -- '--sandbox danger-full-access' "$TMP/codex-review-args.txt"
   grep -q 'Task id: bd-1234' "$TMP/codex-review-args.txt"
   grep -q 'Handoff slug: imported-task' "$TMP/codex-review-args.txt"
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-sandbox-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task --sandbox workspace-write >/dev/null
+  grep -q -- '--sandbox workspace-write' "$TMP/codex-review-sandbox-args.txt"
+  ! grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-sandbox-args.txt"
   printf 'Manual test found an overlap in the empty state.\n' > manual-feedback.md
   CODEX_ARGS_CAPTURE="$TMP/codex-review-feedback-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review-feedback imported-task --from manual-feedback.md >/dev/null
+  grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-feedback-args.txt"
   grep -q 'Human feedback:' "$TMP/codex-review-feedback-args.txt"
   grep -q 'Prior review:' "$TMP/codex-review-feedback-args.txt"
   grep -R 'Manual test found an overlap' .humanize-flow/runs/*/human-feedback.md >/dev/null
@@ -212,6 +271,7 @@ printf 'Editor feedback found a translated label issue.\n' > "$1"
 EDITOR
   chmod +x "$TMP/fake-bin/editor"
   CODEX_ARGS_CAPTURE="$TMP/codex-review-feedback-editor-args.txt" EDITOR="$TMP/fake-bin/editor" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review-feedback imported-task >/dev/null
+  grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-feedback-editor-args.txt"
   grep -q 'Human feedback:' "$TMP/codex-review-feedback-editor-args.txt"
   grep -R 'Editor feedback found a translated label issue' .humanize-flow/runs/*/human-feedback.md >/dev/null
   python3 - <<'PY'
@@ -225,6 +285,21 @@ PY
   HUMANIZE_FLOW_CODEX_MODEL=gpt-5.5 HUMANIZE_FLOW_CODEX_REASONING_EFFORT=high CODEX_ARGS_CAPTURE="$TMP/codex-configured-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
   grep -q -- '--model gpt-5.5' "$TMP/codex-configured-review-args.txt"
   grep -q -- '-c model_reasoning_effort="high"' "$TMP/codex-configured-review-args.txt"
+  HUMANIZE_FLOW_REVIEW_SANDBOX=read-only HUMANIZE_FLOW_REVIEW_YOLO=false CODEX_ARGS_CAPTURE="$TMP/codex-env-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
+  grep -q -- '--sandbox read-only' "$TMP/codex-env-review-args.txt"
+  HUMANIZE_FLOW_REVIEW_YOLO=false CODEX_ARGS_CAPTURE="$TMP/codex-env-no-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
+  grep -q -- '--sandbox danger-full-access' "$TMP/codex-env-no-yolo-review-args.txt"
+  "$ROOT/bin/humanize-flow" config set review.sandbox workspace-write >/dev/null
+  "$ROOT/bin/humanize-flow" config set review.yolo false >/dev/null
+  CODEX_ARGS_CAPTURE="$TMP/codex-config-sandbox-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
+  grep -q -- '--sandbox workspace-write' "$TMP/codex-config-sandbox-review-args.txt"
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run imported-task --yolo --max-round 2 >/dev/null
+  test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "2"
+  grep -q -- '--permission-mode auto' "$TMP/claude-yolo-args.txt"
+  grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-yolo-review-args.txt"
+  grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/' "$TMP/claude-yolo-args.txt"
+  grep -R 'YOLO second review passed' docs/humanize-flow/imported-task/reviews >/dev/null
   git checkout -qb feature/pr-smoke
   printf 'pr\n' > pr-change.txt
   git add pr-change.txt

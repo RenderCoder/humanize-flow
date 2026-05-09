@@ -7,10 +7,10 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 - Planner 不编辑实现代码。
 - Worker 需要已批准 handoff。
 - Reviewer 不实现修复。
-- CLI 默认不使用 full-access sandbox 模式。
-- Codex review 默认不会开启 yolo 或 full-access 模式。
+- Planner、commit、PR 和 worker 流程默认不会完全绕过 Codex sandbox。
+- Codex review 和 review-feedback 默认使用 yolo 模式，也就是 `--dangerously-bypass-approvals-and-sandbox`，避免 review 循环被权限提示阻塞。
 - Claude Code worker 默认使用权限模式 `auto`，不是完全绕过权限。
-- humanize/RLCR 是可选增强，不应默认要求危险权限。
+- Claude Code worker 默认使用 `claude.humanize=required`；如果 humanize 不可用，应显式降低模式，而不是静默绕过循环。
 
 ## 批准门禁
 
@@ -26,9 +26,11 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 
 ## 权限建议
 
-使用最小权限。规划阶段通常只需要 `codex exec --sandbox workspace-write` 来写规划产物。审查阶段优先采用只读行为。如果当前 Codex sandbox 无法读取 review 所需的仓库文件、handoff、plan、acceptance criteria、Beads 任务或 diff，reviewer 应返回 `blocked` 并说明缺少哪些证据。
+规划阶段使用最小权限：`codex exec --sandbox workspace-write` 通常足够写规划产物。Review 和 review-feedback 默认使用 yolo 模式，因为它们需要稳定检查仓库并写入 review 产物，而且不能被权限确认提示打断。该模式会传给 Codex `--dangerously-bypass-approvals-and-sandbox`，所以只应在可信、外部隔离的仓库环境里使用。可以用 `humanize-flow config set review.yolo false` 或 `HUMANIZE_FLOW_REVIEW_YOLO=false` 降低默认权限，然后通过 `humanize-flow config set review.sandbox workspace-write`、`HUMANIZE_FLOW_REVIEW_SANDBOX=workspace-write` 或 `humanize-flow review <id> --sandbox read-only` 这类单次覆盖控制 sandbox。
 
 Claude Code worker 默认权限模式是 `auto`，这样已批准任务可以顺畅执行，不需要每次文件编辑都询问。这和 `bypassPermissions` 或 `--dangerously-skip-permissions` 不同；后两者仍应只作为明确的本地选择。
+
+默认 humanize 模式是 `required`。这意味着 `humanize-flow run` 会预检 humanize 命令、Claude 插件或已安装的 Codex humanize skill 脚本，worker prompt 会要求 Claude 在改代码前启动 humanize/RLCR。需要建议模式时使用 `humanize-flow config set claude.humanize auto`；只有明确希望直接实现并交给 Humanize Flow review 时才设为 `off`。
 
 可以通过 `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` 或 `humanize-flow config set claude.permission_mode <mode>` 匹配你的本地权限策略。不要把危险的权限绕过模式作为默认值。
 

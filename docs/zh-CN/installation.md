@@ -75,4 +75,4 @@ export PATH="$HOME/.local/bin:$PATH"
 humanize-flow doctor
 ```
 
-如果你还没安装 Codex、Claude Code、Beads 或 humanize，看到相关 warning 是正常的。Bash、Git、Python 3、`jq` 这类基础工具缺失时，应先修复。
+如果你还没安装 Codex、Claude Code 或 Beads，看到相关 warning 是正常的。由于 worker 默认使用 `claude.humanize=required`，缺少 humanize 会被视为 failure，除非你把模式降为 `auto` 或 `off`。Bash、Git、Python 3、`jq` 这类基础工具缺失时，应先修复。

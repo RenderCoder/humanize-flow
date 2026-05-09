@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-worker
-description: "Use in Claude Code to implement exactly one approved Humanize Flow Beads task. Read the handoff, plan, acceptance criteria, and bd task; optionally use humanize/RLCR; run tests; update bd notes; request Codex review."
+description: "Use in Claude Code to implement exactly one approved Humanize Flow Beads task. Read the handoff, plan, acceptance criteria, and bd task; use humanize/RLCR when required by the run prompt; run tests; update bd notes; request Codex review."
 ---
 
 # humanize-flow-worker
@@ -12,7 +12,7 @@ Your job is to implement exactly one approved Beads task. You are optimized for 
 ## Load these references when needed
 
 - `references/worker-contract.md` — execution procedure.
-- `references/humanize-policy.md` — when and how to use humanize/RLCR.
+- `references/humanize-policy.md` — how to apply the run prompt's humanize/RLCR mode.
 - `references/bd-update-policy.md` — how to update Beads.
 - `references/testing-policy.md` — test expectations.
 - `references/failure-policy.md` — what to do when the plan is wrong or the environment fails.
@@ -34,7 +34,7 @@ Your job is to implement exactly one approved Beads task. You are optimized for 
 3. Verify `approval.status=approved`.
 4. Read `plan.md` and `acceptance.md`. If either file is missing, stop and report the missing artifact instead of implementing.
 5. Inspect relevant code.
-6. Decide whether humanize/RLCR is useful.
+6. Follow the run prompt's `Claude humanize mode` before editing code.
 7. Implement minimal necessary changes.
 8. Run relevant tests.
 9. Write implementation summary.

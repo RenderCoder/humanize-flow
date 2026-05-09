@@ -2,13 +2,16 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.4.0"
+HF_VERSION="0.5.0"
 HF_NAME="humanize-flow"
-HF_DEFAULT_CLAUDE_MODEL="claude-opus-4-7"
+HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"
+HF_DEFAULT_CLAUDE_HUMANIZE="required"
 HF_DEFAULT_LANGUAGE="en"
 HF_DEFAULT_CODEX_MODEL=""
 HF_DEFAULT_CODEX_REASONING_EFFORT=""
+HF_DEFAULT_REVIEW_SANDBOX="danger-full-access"
+HF_DEFAULT_REVIEW_YOLO="true"
 
 log() { printf '%s\n' "$*"; }
 info() { printf '[humanize-flow] %s\n' "$*"; }
@@ -17,7 +20,7 @@ die() { printf '[humanize-flow] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-humanize-flow - orchestrate Codex planning/review, Claude Code work, Beads tasks, and optional humanize loops.
+humanize-flow - orchestrate Codex planning/review, Claude Code work, Beads tasks, and required-by-default humanize loops.
 
 Usage:
   humanize-flow <command> [options]
@@ -56,9 +59,14 @@ Environment:
   HUMANIZE_FLOW_CLAUDE_MODEL   Override Claude Code model for worker runs.
   HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE
                                Override Claude Code permission mode for worker runs.
+  HUMANIZE_FLOW_CLAUDE_HUMANIZE
+                               Override Claude Code humanize mode (required, auto, off).
   HUMANIZE_FLOW_CODEX_MODEL    Override Codex model for planner/review/commit/pr runs.
   HUMANIZE_FLOW_CODEX_REASONING_EFFORT
                                Override Codex reasoning effort for planner/review/commit/pr runs.
+  HUMANIZE_FLOW_REVIEW_SANDBOX
+                               Override Codex sandbox for review/review-feedback runs.
+  HUMANIZE_FLOW_REVIEW_YOLO    Override Codex yolo mode for review/review-feedback runs.
   HUMANIZE_FLOW_LANGUAGE       Override artifact language for one command.
   HUMANIZE_FLOW_CODEX_ARGS     Extra Codex exec args. Default: empty.
   HUMANIZE_FLOW_NONINTERACTIVE Set to 1 to avoid interactive prompts in scripts.
@@ -71,6 +79,7 @@ Examples:
   humanize-flow i18n zh
   humanize-flow approve undo-redo --materialize-bd
   humanize-flow run-next
+  humanize-flow run bd-a1b2 --yolo
   humanize-flow review bd-a1b2
   humanize-flow review-feedback bd-a1b2
   humanize-flow commit
@@ -107,6 +116,16 @@ state_dir() { printf '%s/.humanize-flow\n' "$(repo_root)"; }
 docs_dir() { printf '%s/docs/humanize-flow\n' "$(repo_root)"; }
 handoff_path() { printf '%s/handoffs/%s.json\n' "$(state_dir)" "$1"; }
 user_config_path() { printf '%s/humanize-flow/config.json\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
+repo_relative_path() {
+  local path root
+  path="$1"
+  root="$(repo_root)"
+  case "$path" in
+    "$root"/*) printf '%s\n' "${path#"$root"/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
 
 slugify() {
   python3 - "$@" <<'PY'
@@ -210,6 +229,13 @@ claude_permission_mode_default() {
   config_get "claude.permission_mode" "$HF_DEFAULT_CLAUDE_PERMISSION_MODE" "HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE"
 }
 
+claude_humanize_default() {
+  local raw normalized
+  raw="$(config_get "claude.humanize" "$HF_DEFAULT_CLAUDE_HUMANIZE" "HUMANIZE_FLOW_CLAUDE_HUMANIZE")"
+  normalized="$(normalize_humanize_mode "$raw")" || die "Unsupported Claude humanize mode: $raw (supported: required, auto, off)"
+  printf '%s\n' "$normalized"
+}
+
 codex_model_default() {
   config_get "codex.model" "$HF_DEFAULT_CODEX_MODEL" "HUMANIZE_FLOW_CODEX_MODEL"
 }
@@ -218,9 +244,47 @@ codex_reasoning_effort_default() {
   config_get "codex.reasoning_effort" "$HF_DEFAULT_CODEX_REASONING_EFFORT" "HUMANIZE_FLOW_CODEX_REASONING_EFFORT"
 }
 
+review_sandbox_default() {
+  local raw normalized
+  raw="$(config_get "review.sandbox" "$HF_DEFAULT_REVIEW_SANDBOX" "HUMANIZE_FLOW_REVIEW_SANDBOX")"
+  normalized="$(normalize_sandbox_mode "$raw")" || die "Unsupported review sandbox: $raw (supported: read-only, workspace-write, danger-full-access)"
+  printf '%s\n' "$normalized"
+}
+
+review_yolo_default() {
+  local raw normalized
+  raw="$(config_get "review.yolo" "$HF_DEFAULT_REVIEW_YOLO" "HUMANIZE_FLOW_REVIEW_YOLO")"
+  normalized="$(normalize_bool "$raw")" || die "Unsupported review yolo value: $raw (supported: true, false)"
+  printf '%s\n' "$normalized"
+}
+
 normalize_reasoning_effort() {
   case "$1" in
     ""|low|medium|high|xhigh) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_bool() {
+  case "$1" in
+    true|TRUE|True|1|yes|YES|Yes|on|ON|On) printf 'true\n' ;;
+    false|FALSE|False|0|no|NO|No|off|OFF|Off) printf 'false\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_humanize_mode() {
+  case "$1" in
+    required|require|must|true|TRUE|True|1|yes|YES|Yes|on|ON|On) printf 'required\n' ;;
+    auto|optional|prefer|preferred) printf 'auto\n' ;;
+    off|none|disable|disabled|false|FALSE|False|0|no|NO|No) printf 'off\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_sandbox_mode() {
+  case "$1" in
+    read-only|workspace-write|danger-full-access) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -268,19 +332,40 @@ EOF
 }
 
 run_codex_exec() {
-  local sandbox="" prompt model reasoning
+  local sandbox="" yolo="false" prompt model reasoning
   local args
-  if [ "${1:-}" = "--sandbox" ]; then
-    sandbox="${2:-}"
-    shift 2
-  fi
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --sandbox)
+        shift
+        sandbox="${1:-}"
+        yolo="false"
+        shift
+        ;;
+      --yolo)
+        yolo="true"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
   prompt="${1:-}"
   model="$(codex_model_default)"
   reasoning="$(codex_reasoning_effort_default)"
   reasoning="$(normalize_reasoning_effort "$reasoning")" || die "Unsupported Codex reasoning effort: $reasoning (supported: low, medium, high, xhigh)"
 
   args=(exec)
-  if [ -n "$sandbox" ]; then args+=(--sandbox "$sandbox"); fi
+  if [ "$yolo" = "true" ]; then
+    args+=(--dangerously-bypass-approvals-and-sandbox)
+  elif [ -n "$sandbox" ]; then
+    args+=(--sandbox "$sandbox")
+  fi
   if [ -n "$model" ]; then args+=(--model "$model"); fi
   if [ -n "$reasoning" ]; then args+=(-c "model_reasoning_effort=\"$reasoning\""); fi
 
@@ -424,8 +509,11 @@ user_config: $file
 language: $(language_default)
 claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
+claude.humanize: $(claude_humanize_default)
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
+review.yolo: $(review_yolo_default)
+review.sandbox: $(review_sandbox_default)
 EOF
       ;;
     get)
@@ -434,8 +522,11 @@ EOF
         language) language_default ;;
         claude.model) claude_model_default ;;
         claude.permission_mode) claude_permission_mode_default ;;
+        claude.humanize) claude_humanize_default ;;
         codex.model) codex_model_default ;;
         codex.reasoning_effort) codex_reasoning_effort_default ;;
+        review.yolo) review_yolo_default ;;
+        review.sandbox) review_sandbox_default ;;
         *) config_get_raw "$key" "" ;;
       esac
       ;;
@@ -451,6 +542,18 @@ EOF
           normalized="$(normalize_reasoning_effort "$value")" || die "Unsupported Codex reasoning effort: $value (supported: low, medium, high, xhigh)"
           value="$normalized"
           ;;
+        review.sandbox)
+          normalized="$(normalize_sandbox_mode "$value")" || die "Unsupported review sandbox: $value (supported: read-only, workspace-write, danger-full-access)"
+          value="$normalized"
+          ;;
+        review.yolo)
+          normalized="$(normalize_bool "$value")" || die "Unsupported review yolo value: $value (supported: true, false)"
+          value="$normalized"
+          ;;
+        claude.humanize)
+          normalized="$(normalize_humanize_mode "$value")" || die "Unsupported Claude humanize mode: $value (supported: required, auto, off)"
+          value="$normalized"
+          ;;
         claude.model|claude.permission_mode|codex.model) ;;
         *) die "Unsupported config key: $key" ;;
       esac
@@ -464,12 +567,18 @@ Usage:
   humanize-flow config get language
   humanize-flow config set language zh
   humanize-flow config get claude.model
-  humanize-flow config set claude.model claude-opus-4-7
+  humanize-flow config set claude.model claude-sonnet-4-6
   humanize-flow config set claude.permission_mode auto
+  humanize-flow config get claude.humanize
+  humanize-flow config set claude.humanize required
   humanize-flow config get codex.model
   humanize-flow config set codex.model gpt-5.5
   humanize-flow config get codex.reasoning_effort
   humanize-flow config set codex.reasoning_effort high
+  humanize-flow config get review.yolo
+  humanize-flow config set review.yolo false
+  humanize-flow config get review.sandbox
+  humanize-flow config set review.sandbox workspace-write
 EOF
       ;;
     *) die "Unknown config command: $sub" ;;
@@ -515,6 +624,73 @@ worker_skill_file() {
   return 1
 }
 
+humanize_integration_path() {
+  local p
+  if command_exists humanize; then command -v humanize; return 0; fi
+  p="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins"
+  if [ -d "$p" ]; then
+    p="$(find "$p" -type d -name humanize 2>/dev/null | head -n 1 || true)"
+    if [ -n "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  fi
+  p="$HOME/.codex/skills/humanize/scripts/setup-rlcr-loop.sh"
+  if [ -x "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  return 1
+}
+
+ensure_humanize_available() {
+  local mode found
+  mode="$1"
+  [ "$mode" = "required" ] || return 0
+  found="$(humanize_integration_path 2>/dev/null || true)"
+  [ -n "$found" ] || die "Claude humanize mode is required, but no humanize command, Claude plugin, or Codex humanize skill script was detected. Install humanize or run with --humanize-mode off / config set claude.humanize off."
+}
+
+humanize_worker_instruction() {
+  local mode plan_path plan_display integration_path
+  mode="$1"; plan_path="$2"
+  if [ -n "$plan_path" ]; then plan_display="$(repo_relative_path "$plan_path")"; else plan_display="not-found"; fi
+  integration_path="$(humanize_integration_path 2>/dev/null || true)"
+  case "$mode" in
+    required)
+      cat <<EOF
+Claude humanize mode: required
+Humanize integration path detected before launch: ${integration_path:-not-detected}
+Plan path for RLCR: $plan_display
+
+Required humanize behavior:
+- Before implementation, start humanize/RLCR inside this Claude Code session using the approved plan path above.
+- Prefer the installed Claude plugin command: /humanize:start-rlcr-loop $plan_display --yolo
+- If the slash command is unavailable but a humanize script is available, use the installed setup-rlcr-loop.sh equivalent for the same plan.
+- If humanize/RLCR cannot be started, stop without editing code and report the blocker.
+- Do not silently emulate humanize discipline in required mode.
+EOF
+      ;;
+    auto)
+      cat <<EOF
+Claude humanize mode: auto
+Humanize integration path detected before launch: ${integration_path:-not-detected}
+Plan path for RLCR: $plan_display
+
+Auto humanize behavior:
+- Use humanize/RLCR for complex implementation when it is installed and safe in this Claude Code context.
+- Prefer: /humanize:start-rlcr-loop $plan_display --yolo
+- If the plan path is not-found, humanize is unavailable, or this is a tiny safe edit, implement directly while preserving the review boundary.
+EOF
+      ;;
+    off)
+      cat <<EOF
+Claude humanize mode: off
+Humanize integration is disabled for this run.
+
+Required behavior:
+- Do not start humanize/RLCR.
+- Implement directly from the approved handoff, plan, and acceptance criteria.
+- Preserve the Codex review boundary.
+EOF
+      ;;
+  esac
+}
+
 cmd_paths() {
   cat <<EOF
 version: $HF_VERSION
@@ -526,8 +702,11 @@ user_config: $(user_config_path)
 language: $(language_default)
 claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
+claude.humanize: $(claude_humanize_default)
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
+review.yolo: $(review_yolo_default)
+review.sandbox: $(review_sandbox_default)
 codex_user_skills_dir: $HOME/.agents/skills
 claude_user_skills_dir: ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills
 EOF
@@ -540,8 +719,11 @@ cmd_doctor() {
   info "language: $(language_default)"
   info "claude model: $(claude_model_default)"
   info "claude permission mode: $(claude_permission_mode_default)"
+  info "claude humanize: $(claude_humanize_default)"
   info "codex model: $(display_optional_config "$(codex_model_default)" "(codex default)")"
   info "codex reasoning effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")"
+  info "review yolo: $(review_yolo_default)"
+  info "review sandbox: $(review_sandbox_default)"
 
   for bin in git python3 codex claude bd jq; do
     if command_exists "$bin"; then
@@ -583,12 +765,15 @@ cmd_doctor() {
     printf '  WARN claude skill humanize-flow-worker not found\n'
   fi
 
-  if command_exists humanize; then
-    printf '  OK   humanize optional command found: %s\n' "$(command -v humanize)"
-  elif [ -d "$HOME/.claude/plugins" ] && find "$HOME/.claude/plugins" -type d -name humanize 2>/dev/null | head -n 1 | grep -q .; then
-    printf '  OK   humanize optional plugin directory appears to exist\n'
+  if humanize_path="$(humanize_integration_path 2>/dev/null || true)" && [ -n "$humanize_path" ]; then
+    printf '  OK   humanize integration found: %s\n' "$humanize_path"
   else
-    printf '  WARN humanize optional integration not detected\n'
+    if [ "$(claude_humanize_default)" = "required" ]; then
+      printf '  FAIL humanize integration not detected (claude.humanize=required)\n'
+      failures=$((failures + 1))
+    else
+      printf '  WARN humanize integration not detected (claude.humanize=$(claude_humanize_default))\n'
+    fi
   fi
 
   if [ "$failures" -gt 0 ]; then
@@ -899,7 +1084,7 @@ path = sys.argv[1]
 with open(path, encoding='utf-8') as f:
     data = json.load(f)
 data['state'] = 'approved'
-data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+data['updated_at'] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 approval = data.setdefault('approval', {})
 approval['required'] = True
 approval['status'] = 'approved'
@@ -1052,7 +1237,7 @@ for task in tasks:
 bd['materialized'] = True
 data['bd'] = bd
 data['state'] = 'approved'
-data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+data['updated_at'] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 print(f'Materialized {len(tasks)} task(s) under epic {epic_id}.')
 PY
@@ -1179,6 +1364,64 @@ latest_review_for_slug() {
   find "$review_dir" -maxdepth 1 -type f -name '*.md' -print | sort | tail -n 1
 }
 
+review_verdict() {
+  local review_file
+  review_file="$1"
+  [ -f "$review_file" ] || return 1
+  python3 - "$review_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')
+patterns = [
+    r'(?im)^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b',
+    r'(?im)^\s*`(pass|changes_requested|blocked)`\s*$',
+    r'(?im)^\s*(pass|changes_requested|blocked)\s*$',
+]
+for pattern in patterns:
+    match = re.search(pattern, text)
+    if match:
+        print(match.group(1).lower())
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+handoff_artifact_path() {
+  local slug key file value root
+  slug="$1"; key="$2"
+  file="$(handoff_path "$slug")"
+  [ -f "$file" ] || return 1
+  value="$(json_get "$file" "artifacts.$key" "")"
+  [ -n "$value" ] || return 1
+  root="$(repo_root)"
+  case "$value" in
+    /*) printf '%s\n' "$value" ;;
+    *) printf '%s/%s\n' "$root" "$value" ;;
+  esac
+}
+
+ensure_approved_handoff_for_slug() {
+  local slug file
+  slug="$1"
+  file="$(handoff_path "$slug")"
+  [ -f "$file" ] || die "handoff not found for yolo run: $file"
+  python3 - "$file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception as exc:
+    raise SystemExit(f'invalid handoff JSON: {path}: {exc}')
+if data.get('approval', {}).get('status') != 'approved':
+    raise SystemExit(f'handoff is not approved: {path}')
+PY
+}
+
 set_handoff_artifact() {
   local slug key value file
   slug="$1"; key="$2"; value="$3"
@@ -1197,54 +1440,20 @@ except Exception:
     raise SystemExit(0)
 artifacts = data.setdefault('artifacts', {})
 artifacts[key] = value
-data['updated_at'] = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+data['updated_at'] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 PY
 }
 
-cmd_run() {
+cmd_run_once() {
   require_git_repo
-  local ref bd_id slug file run_dir prompt_file final_file raw_file skill_file skill_text prompt_text claude_args mode model permission_mode output_format verbose partial hook_events
-  ref=""; bd_id=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
-  output_format="stream-json"; verbose=1; partial=1; hook_events=1
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --interactive|-i) mode="interactive" ;;
-      --model) shift; model="${1:-}" ;;
-      --permission-mode) shift; permission_mode="${1:-}" ;;
-      --text) output_format="text"; partial=0; hook_events=0 ;;
-      --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
-      --no-partial) partial=0 ;;
-      --no-hook-events) hook_events=0 ;;
-      --no-verbose) verbose=0 ;;
-      --help|-h)
-        cat <<'EOF'
-Usage:
-  humanize-flow run BD_ID_OR_SLUG [options]
-
-BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
-
-Options:
-  --interactive, -i          Open a Claude Code interactive session instead of print mode.
-  --model MODEL              Override the configured Claude model for this run.
-  --permission-mode MODE     Override the configured Claude permission mode for this run.
-  --text                     Use Claude text output instead of detailed stream-json.
-  --stream-json              Use detailed stream-json internally and show a human-readable progress log. This is the default.
-  --no-partial               Do not include partial message chunks in stream-json output.
-  --no-hook-events           Do not include hook lifecycle events in stream-json output.
-  --no-verbose               Do not pass --verbose to Claude Code.
-EOF
-        return 0 ;;
-      --*) die "Unknown run option: $1" ;;
-      *)
-        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected run argument: $1"; fi
-        ;;
-    esac
-    shift
-  done
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode
+  local bd_id slug file latest_review latest_review_display plan_path plan_display humanize_text run_dir prompt_file final_file raw_file skill_file skill_text prompt_text claude_args
+  ref="$1"; mode="$2"; model="$3"; permission_mode="$4"; output_format="$5"; verbose="$6"; partial="$7"; hook_events="$8"; humanize_mode="$9"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
   [ -n "$model" ] || die "Claude model cannot be empty."
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
+  humanize_mode="$(normalize_humanize_mode "$humanize_mode")" || die "Unsupported Claude humanize mode: $humanize_mode (supported: required, auto, off)"
   command_exists claude || die "claude CLI not found."
   command_exists bd || warn "bd CLI not found; worker prompt will still reference task id."
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
@@ -1253,6 +1462,15 @@ EOF
   fi
   if [ -z "$bd_id" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
+  if [ -n "$slug" ]; then latest_review="$(latest_review_for_slug "$slug" 2>/dev/null || true)"; else latest_review=""; fi
+  if [ -n "$latest_review" ]; then latest_review_display="$(repo_relative_path "$latest_review")"; else latest_review_display=""; fi
+  if [ -n "$slug" ]; then plan_path="$(handoff_artifact_path "$slug" "plan" 2>/dev/null || true)"; else plan_path=""; fi
+  if [ -n "$plan_path" ]; then plan_display="$(repo_relative_path "$plan_path")"; else plan_display="not-found"; fi
+  ensure_humanize_available "$humanize_mode"
+  if [ "$humanize_mode" = "required" ] && { [ -z "$plan_path" ] || [ ! -f "$plan_path" ]; }; then
+    die "Claude humanize mode is required, but the approved plan artifact was not found for $ref. Expected plan path: $plan_display"
+  fi
+  humanize_text="$(humanize_worker_instruction "$humanize_mode" "$plan_path")"
   run_dir="$(state_dir)/runs/$(timestamp)-run-$bd_id"
   mkdir -p "$run_dir"
   prompt_file="$run_dir/claude-worker-prompt.md"
@@ -1268,6 +1486,8 @@ You are the Claude Code implementer in the Humanize Flow workflow.
 Task id: $bd_id
 Handoff slug: ${slug:-unknown}
 Handoff path: ${file:-not-found}
+Plan path: $plan_display
+Latest review path: ${latest_review_display:-not-found}
 Repository root: $(repo_root)
 
 $(language_instruction)
@@ -1282,9 +1502,10 @@ Required behavior:
 - Read the Beads task with: bd show $bd_id --json
 - Read the approved handoff, plan, and acceptance criteria before implementing.
 - If the approved handoff, plan, or acceptance criteria cannot be found, stop and report the missing artifact instead of implementing from the brief Beads task alone.
+- If the latest review path is not "not-found", read that review as the current correction target before editing.
+- Do not bulk-load docs/humanize-flow/${slug:-unknown}/reviews/ or older review reports. Inspect older reviews only when the latest review explicitly references them or the user asks for review history.
 - Do not expand scope beyond this task.
-- Prefer humanize/RLCR for complex implementation if it is installed and usable in this Claude Code context.
-- If humanize is unavailable, implement directly and preserve the review boundary.
+$humanize_text
 - Run relevant tests.
 - Write an implementation summary under docs/humanize-flow/<slug>/implementation/ when a slug is known.
 - Update Beads notes/status with what changed, tests run, and remaining risks.
@@ -1299,6 +1520,7 @@ EOF
     info "starting Claude Code interactive worker session"
     info "model: $model"
     info "permission mode: $permission_mode"
+    info "humanize mode: $humanize_mode"
     info "final output is not captured in print-mode log for interactive sessions"
     # shellcheck disable=SC2086
     claude --model "$model" --permission-mode "$permission_mode" $claude_args "$prompt_text"
@@ -1306,6 +1528,7 @@ EOF
     info "starting Claude Code print worker session"
     info "model: $model"
     info "permission mode: $permission_mode"
+    info "humanize mode: $humanize_mode"
     info "output format: $output_format"
     if [ "$output_format" = "stream-json" ]; then
       info "human-readable log: $final_file"
@@ -1348,6 +1571,121 @@ EOF
         claude -p --model "$model" --permission-mode "$permission_mode" --output-format text $claude_args "$prompt_text" | tee "$final_file"
       fi
     fi
+  fi
+}
+
+cmd_run_yolo() {
+  require_git_repo
+  local ref max_round model output_format verbose partial hook_events humanize_mode slug bd_id round latest_review verdict
+  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"
+  [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
+  case "$max_round" in
+    ''|*[!0-9]*) die "--max-round must be a positive integer." ;;
+  esac
+  [ "$max_round" -ge 1 ] || die "--max-round must be at least 1."
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  [ -n "$slug" ] || die "YOLO mode requires an approved Humanize Flow handoff for: $ref"
+  ensure_approved_handoff_for_slug "$slug"
+  bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
+  [ -n "$bd_id" ] || bd_id="$ref"
+
+  info "starting YOLO mode"
+  info "handoff slug: $slug"
+  info "task id: $bd_id"
+  info "max rounds: $max_round"
+  info "humanize mode: $humanize_mode"
+  round=1
+  while [ "$round" -le "$max_round" ]; do
+    info "YOLO round $round/$max_round: Claude Code worker"
+    cmd_run_once "$bd_id" "print" "$model" "auto" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
+    info "YOLO round $round/$max_round: Codex review"
+    cmd_review "$bd_id" --yolo
+    latest_review="$(latest_review_for_slug "$slug" 2>/dev/null || true)"
+    [ -n "$latest_review" ] || die "YOLO review did not produce a review artifact for $slug"
+    verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
+    info "YOLO review verdict: ${verdict:-unknown}"
+    case "$verdict" in
+      pass)
+        info "YOLO mode completed after $round round(s): review passed."
+        return 0
+        ;;
+      changes_requested|blocked|"")
+        if [ "$round" -ge "$max_round" ]; then
+          die "YOLO mode reached max rounds ($max_round) without a passing review. Latest review: $latest_review"
+        fi
+        info "YOLO mode will run another correction round using latest review: $(repo_relative_path "$latest_review")"
+        ;;
+      *)
+        if [ "$round" -ge "$max_round" ]; then
+          die "YOLO mode could not parse a passing review before max rounds. Latest verdict: $verdict. Latest review: $latest_review"
+        fi
+        warn "Unrecognized review verdict '$verdict'; continuing correction loop."
+        ;;
+    esac
+    round=$((round + 1))
+  done
+}
+
+cmd_run() {
+  require_git_repo
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode yolo max_round
+  ref=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
+  humanize_mode="$(claude_humanize_default)"
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --interactive|-i) mode="interactive" ;;
+      --model) shift; model="${1:-}" ;;
+      --permission-mode) shift; permission_mode="${1:-}" ;;
+      --humanize) humanize_mode="required" ;;
+      --no-humanize) humanize_mode="off" ;;
+      --humanize-mode) shift; humanize_mode="${1:-}" ;;
+      --yolo) yolo=1; permission_mode="auto" ;;
+      --max-round) shift; max_round="${1:-}" ;;
+      --text) output_format="text"; partial=0; hook_events=0 ;;
+      --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
+      --no-partial) partial=0 ;;
+      --no-hook-events) hook_events=0 ;;
+      --no-verbose) verbose=0 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow run BD_ID_OR_SLUG [options]
+
+BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
+
+Options:
+  --interactive, -i          Open a Claude Code interactive session instead of print mode.
+  --model MODEL              Override the configured Claude model for this run.
+  --permission-mode MODE     Override the configured Claude permission mode for this run.
+  --humanize                 Require humanize/RLCR for this run.
+  --no-humanize              Disable humanize/RLCR for this run.
+  --humanize-mode MODE       Set humanize mode: required, auto, or off.
+  --yolo                     Run Claude+Codex review loop until pass or max rounds.
+  --max-round N              Maximum YOLO correction rounds. Default: 3.
+  --text                     Use Claude text output instead of detailed stream-json.
+  --stream-json              Use detailed stream-json internally and show a human-readable progress log. This is the default.
+  --no-partial               Do not include partial message chunks in stream-json output.
+  --no-hook-events           Do not include hook lifecycle events in stream-json output.
+  --no-verbose               Do not pass --verbose to Claude Code.
+EOF
+        return 0 ;;
+      --*) die "Unknown run option: $1" ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected run argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+  [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
+  [ -n "$model" ] || die "Claude model cannot be empty."
+  [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
+  humanize_mode="$(normalize_humanize_mode "$humanize_mode")" || die "Unsupported Claude humanize mode: $humanize_mode (supported: required, auto, off)"
+  if [ "$yolo" -eq 1 ]; then
+    [ "$mode" != "interactive" ] || die "YOLO mode does not support --interactive."
+    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
+  else
+    cmd_run_once "$ref" "$mode" "$model" "$permission_mode" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
   fi
 }
 
@@ -1532,18 +1870,37 @@ PY
 
 cmd_review() {
   require_git_repo
-  local ref bd_id slug file run_dir prompt_file review_dir review_file base prompt_text
-  case "${1:-}" in
-    --help|-h|help)
-      cat <<'EOF'
+  local ref="" bd_id slug file run_dir prompt_file review_dir review_file base prompt_text sandbox yolo
+  sandbox="$(review_sandbox_default)"
+  yolo="$(review_yolo_default)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --sandbox) shift; sandbox="${1:-}"; yolo="false" ;;
+      --yolo) yolo="true" ;;
+      --no-yolo) yolo="false" ;;
+      --help|-h|help)
+        cat <<'EOF'
 Usage:
-  humanize-flow review BD_ID_OR_SLUG
+  humanize-flow review BD_ID_OR_SLUG [--yolo|--no-yolo] [--sandbox MODE]
 
 BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
+Default review mode is yolo, which passes Codex
+--dangerously-bypass-approvals-and-sandbox to avoid approval prompts.
+Set review.yolo=false, HUMANIZE_FLOW_REVIEW_YOLO=false, --no-yolo, or
+--sandbox MODE to use normal sandboxed Codex execution. Supported sandbox
+modes: read-only, workspace-write, danger-full-access.
 EOF
-      return 0 ;;
-  esac
-  ref="${1:-}"; [ -n "$ref" ] || die "Usage: humanize-flow review BD_ID_OR_SLUG"
+        return 0 ;;
+      --*) die "Unknown review option: $1" ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected review argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+  sandbox="$(normalize_sandbox_mode "$sandbox")" || die "Unsupported review sandbox: $sandbox (supported: read-only, workspace-write, danger-full-access)"
+  yolo="$(normalize_bool "$yolo")" || die "Unsupported review yolo value: $yolo (supported: true, false)"
+  [ -n "$ref" ] || die "Usage: humanize-flow review BD_ID_OR_SLUG [--yolo|--no-yolo] [--sandbox MODE]"
   command_exists codex || die "codex CLI not found."
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
   if [ -n "$slug" ]; then
@@ -1584,9 +1941,18 @@ Follow the humanize-flow-reviewer skill exactly:
 EOF
 
   info "review prompt: $prompt_file"
+  info "review yolo: $yolo"
+  if [ "$yolo" = "true" ]; then
+    info "review codex mode: dangerously-bypass-approvals-and-sandbox"
+  else
+    info "review sandbox: $sandbox"
+  fi
   prompt_text="$(cat "$prompt_file")"
-  # shellcheck disable=SC2086
-  run_codex_exec "$prompt_text" | tee "$review_file"
+  if [ "$yolo" = "true" ]; then
+    run_codex_exec --yolo "$prompt_text" | tee "$review_file"
+  else
+    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$review_file"
+  fi
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_review" "$review_file"
   fi
@@ -1595,19 +1961,24 @@ EOF
 
 cmd_review_feedback() {
   require_git_repo
-  local ref="" note="" from_file="" review_file="" bd_id slug file run_dir prompt_file feedback_file output_file review_dir base prompt_text safe_ref editor
+  local ref="" note="" from_file="" review_file="" bd_id slug file run_dir prompt_file feedback_file output_file review_dir base prompt_text safe_ref editor sandbox yolo
+  sandbox="$(review_sandbox_default)"
+  yolo="$(review_yolo_default)"
   while [ $# -gt 0 ]; do
     case "$1" in
       --note) shift; note="${1:-}" ;;
       --from) shift; from_file="${1:-}" ;;
       --review) shift; review_file="${1:-}" ;;
+      --sandbox) shift; sandbox="${1:-}"; yolo="false" ;;
+      --yolo) yolo="true" ;;
+      --no-yolo) yolo="false" ;;
       --help|-h|help)
         cat <<'EOF'
 Usage:
-  humanize-flow review-feedback BD_ID_OR_SLUG
-  humanize-flow review-feedback BD_ID_OR_SLUG --note "manual test feedback"
-  humanize-flow review-feedback BD_ID_OR_SLUG --from docs/manual-test-notes.md
-  humanize-flow review-feedback BD_ID_OR_SLUG --review docs/.../reviews/latest.md --note "..."
+  humanize-flow review-feedback BD_ID_OR_SLUG [--yolo|--no-yolo] [--sandbox MODE]
+  humanize-flow review-feedback BD_ID_OR_SLUG --note "manual test feedback" [--yolo|--no-yolo] [--sandbox MODE]
+  humanize-flow review-feedback BD_ID_OR_SLUG --from docs/manual-test-notes.md [--yolo|--no-yolo] [--sandbox MODE]
+  humanize-flow review-feedback BD_ID_OR_SLUG --review docs/.../reviews/latest.md --note "..." [--yolo|--no-yolo] [--sandbox MODE]
 
 Merges human manual-test feedback or review corrections with the latest Codex
 review and writes a new consolidated review report. The consolidated report
@@ -1617,6 +1988,11 @@ scope or evidence.
 
 Without --note or --from, opens ${VISUAL:-${EDITOR:-vi}} for writing feedback
 and continues after the editor exits.
+Default review-feedback mode is yolo, which passes Codex
+--dangerously-bypass-approvals-and-sandbox to avoid approval prompts.
+Set review.yolo=false, HUMANIZE_FLOW_REVIEW_YOLO=false, --no-yolo, or
+--sandbox MODE to use normal sandboxed Codex execution. Supported sandbox
+modes: read-only, workspace-write, danger-full-access.
 EOF
         return 0 ;;
       --*) die "Unknown review-feedback option: $1" ;;
@@ -1627,6 +2003,8 @@ EOF
     shift
   done
 
+  sandbox="$(normalize_sandbox_mode "$sandbox")" || die "Unsupported review sandbox: $sandbox (supported: read-only, workspace-write, danger-full-access)"
+  yolo="$(normalize_bool "$yolo")" || die "Unsupported review yolo value: $yolo (supported: true, false)"
   [ -n "$ref" ] || die "Usage: humanize-flow review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE]"
   if [ -n "$from_file" ] && [ ! -f "$from_file" ]; then
     die "feedback file not found: $from_file"
@@ -1724,9 +2102,18 @@ EOF
 
   info "review feedback prompt: $prompt_file"
   info "human feedback saved: $feedback_file"
+  info "review feedback yolo: $yolo"
+  if [ "$yolo" = "true" ]; then
+    info "review feedback codex mode: dangerously-bypass-approvals-and-sandbox"
+  else
+    info "review feedback sandbox: $sandbox"
+  fi
   prompt_text="$(cat "$prompt_file")"
-  # shellcheck disable=SC2086
-  run_codex_exec "$prompt_text" | tee "$output_file"
+  if [ "$yolo" = "true" ]; then
+    run_codex_exec --yolo "$prompt_text" | tee "$output_file"
+  else
+    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$output_file"
+  fi
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_review" "$output_file"
     set_handoff_artifact "$slug" "latest_human_feedback" "$feedback_file"

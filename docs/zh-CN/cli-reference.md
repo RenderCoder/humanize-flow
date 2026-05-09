@@ -104,11 +104,25 @@ humanize-flow materialize-bd <slug>
 
 ```bash
 humanize-flow run <bd-id>
+humanize-flow run <bd-id> --yolo
+humanize-flow run <bd-id> --yolo --max-round 5
 humanize-flow run <bd-id> --interactive
-humanize-flow run <bd-id> --model claude-opus-4-7
+humanize-flow run <bd-id> --model claude-sonnet-4-6
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
 ```
 
-默认 worker 运行使用 Claude Code print 模式，内部使用 `stream-json`、partial message chunks、hook events、`--verbose`、模型 `claude-opus-4-7` 和权限模式 `auto`。终端会显示人类可读的进展日志。run 目录中会同时保存 `claude-final.md` 人类可读日志和 `claude-final.jsonl` 原始 Claude 事件流。
+默认 worker 运行使用 Claude Code print 模式，内部使用 `stream-json`、partial message chunks、hook events、`--verbose`、模型 `claude-sonnet-4-6`、权限模式 `auto`，并设置 `claude.humanize=required`。终端会显示人类可读的进展日志。run 目录中会同时保存 `claude-final.md` 人类可读日志和 `claude-final.jsonl` 原始 Claude 事件流。
+
+humanize 模式包括：
+
+- `required`：默认值。CLI 会预检 humanize 是否可用，worker prompt 会要求 Claude 在改代码前从已批准 plan 启动 humanize/RLCR。如果 humanize 无法启动，Claude 必须停止并报告阻塞原因。
+- `auto`：复杂任务在可用时使用 humanize/RLCR；很小或不兼容的任务可以直接实现，但仍保留 Codex review 边界。
+- `off`：不启动 humanize/RLCR。
+
+单次运行可用 `--humanize`、`--humanize-mode required|auto|off` 或 `--no-humanize` 覆盖。全局默认值可用 `humanize-flow config set claude.humanize <mode>` 设置，单条命令也可用 `HUMANIZE_FLOW_CLAUDE_HUMANIZE` 覆盖。
+
+`--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。每一轮都会强制 Claude Code 权限模式为 `auto`，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认最多 3 轮。
 
 使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 
@@ -131,12 +145,18 @@ humanize-flow config show
 humanize-flow config get language
 humanize-flow config set language zh
 humanize-flow config get claude.model
-humanize-flow config set claude.model claude-opus-4-7
+humanize-flow config set claude.model claude-sonnet-4-6
 humanize-flow config set claude.permission_mode auto
+humanize-flow config get claude.humanize
+humanize-flow config set claude.humanize required
 humanize-flow config get codex.model
 humanize-flow config set codex.model gpt-5.5
 humanize-flow config get codex.reasoning_effort
 humanize-flow config set codex.reasoning_effort high
+humanize-flow config get review.yolo
+humanize-flow config set review.yolo false
+humanize-flow config get review.sandbox
+humanize-flow config set review.sandbox workspace-write
 ```
 
 全局配置保存在 `${XDG_CONFIG_HOME:-$HOME/.config}/humanize-flow/config.json`。环境变量仍可对单次命令覆盖配置值。
@@ -162,11 +182,13 @@ humanize-flow i18n zh
 ```bash
 humanize-flow review <bd-id>
 humanize-flow review <handoff-slug>
+humanize-flow review <bd-id> --no-yolo
+humanize-flow review <bd-id> --sandbox workspace-write
 ```
 
 尽量使用实际 Beads 任务 ID。也可以传 handoff slug，CLI 会先解析匹配的 handoff，再选择正确的 review 目录。
 
-`review` 命令默认不会开启 yolo 或 full-access 模式；它使用你的正常 Codex 配置运行 `codex exec`，并应用 Humanize Flow 中配置的 Codex model/reasoning 覆盖。Review 应该保持只读。如果当前 Codex sandbox 无法读取所需的仓库文件、handoff、plan、acceptance criteria 或 diff，reviewer 应该返回 `blocked`，而不是在证据不足时通过。
+`review` 默认使用 yolo 模式，会传给 Codex `--dangerously-bypass-approvals-and-sandbox`，避免权限确认提示阻塞 review 循环。可用 `humanize-flow config set review.yolo false`、`HUMANIZE_FLOW_REVIEW_YOLO=false` 或单次 `--no-yolo` 关闭默认 yolo。关闭 yolo 后，可用 `humanize-flow config set review.sandbox <mode>` 或 `HUMANIZE_FLOW_REVIEW_SANDBOX` 修改 sandbox 默认值，也可用 `--sandbox <mode>` 覆盖单次运行。传入 `--sandbox` 也会自动关闭本次 yolo。支持的模式是 `read-only`、`workspace-write` 和 `danger-full-access`。
 
 当 verdict 是 `pass` 时，review 报告会包含人类验证指南，包括手工测试步骤和提交/推送前检查清单。当 verdict 是 `changes_requested` 或 `blocked` 时，报告会包含人类校正选项，可继续交给 `review-feedback` 合并。
 
@@ -179,9 +201,11 @@ humanize-flow review-feedback <bd-id>
 humanize-flow review-feedback <bd-id> --note "手工测试发现空状态仍然重叠。"
 humanize-flow review-feedback <bd-id> --from docs/manual-test-notes.md
 humanize-flow review-feedback <handoff-slug> --review docs/humanize-flow/<slug>/reviews/<file>.md --from docs/manual-test-notes.md
+humanize-flow review-feedback <bd-id> --no-yolo
+humanize-flow review-feedback <bd-id> --sandbox workspace-write
 ```
 
-不传 `--note` 或 `--from` 时，命令会打开 `${VISUAL:-${EDITOR:-vi}}`，让人类直接填写反馈。它会把人类反馈保存到 `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`，读取前一次 review、handoff、plan、acceptance criteria、git status 和 diff，然后在 `docs/humanize-flow/<slug>/reviews/` 下写出综合后的 review。Codex 必须在考虑人类反馈后重新判断最终 verdict；反馈可能新增 finding、补充缺失验证证据、校正 review 范围，或使原 finding 失效。
+不传 `--note` 或 `--from` 时，命令会打开 `${VISUAL:-${EDITOR:-vi}}`，让人类直接填写反馈。它会把人类反馈保存到 `.humanize-flow/runs/<timestamp>-review-feedback-*/human-feedback.md`，读取前一次 review、handoff、plan、acceptance criteria、git status 和 diff，然后在 `docs/humanize-flow/<slug>/reviews/` 下写出综合后的 review。Codex 必须在考虑人类反馈后重新判断最终 verdict；反馈可能新增 finding、补充缺失验证证据、校正 review 范围，或使原 finding 失效。`review-feedback` 使用和 `review` 相同的 yolo 默认值、`--no-yolo` 和 `--sandbox` 覆盖行为。
 
 选项：
 
@@ -254,8 +278,11 @@ humanize-flow status
 | `HUMANIZE_FLOW_CLAUDE_ARGS` | 传给 `claude -p` 的额外参数。 |
 | `HUMANIZE_FLOW_CLAUDE_MODEL` | 覆盖 Claude Code worker 模型配置。 |
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | 覆盖 Claude Code 权限模式配置。 |
+| `HUMANIZE_FLOW_CLAUDE_HUMANIZE` | 覆盖 Claude Code humanize 模式（`required`、`auto` 或 `off`）。 |
 | `HUMANIZE_FLOW_CODEX_MODEL` | 覆盖 planner/review/commit/pr 使用的 Codex 模型配置。 |
 | `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | 覆盖 planner/review/commit/pr 使用的 Codex 推理强度配置。 |
+| `HUMANIZE_FLOW_REVIEW_YOLO` | 覆盖 review/review-feedback 是否传给 Codex `--dangerously-bypass-approvals-and-sandbox`。 |
+| `HUMANIZE_FLOW_REVIEW_SANDBOX` | 覆盖 review/review-feedback 使用的 Codex sandbox。 |
 | `HUMANIZE_FLOW_LANGUAGE` | 对单次命令覆盖生成产物语言。 |
 | `HUMANIZE_FLOW_CODEX_ARGS` | 传给 `codex exec` 的额外参数。 |
 | `HUMANIZE_FLOW_BIN_DIR` | CLI 安装位置。 |

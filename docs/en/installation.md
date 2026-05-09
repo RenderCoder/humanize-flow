@@ -75,4 +75,4 @@ The uninstaller removes user-level skills, CLI files, and shared files. It does 
 humanize-flow doctor
 ```
 
-Warnings for Codex, Claude Code, Beads, or humanize are expected if you have not installed those optional workflow tools yet. Missing Bash, Git, Python 3, or `jq` should be fixed before serious use.
+Warnings for Codex, Claude Code, or Beads are expected if you have not installed those workflow tools yet. Because worker runs default to `claude.humanize=required`, missing humanize is a failure unless you lower the mode to `auto` or `off`. Missing Bash, Git, Python 3, or `jq` should be fixed before serious use.

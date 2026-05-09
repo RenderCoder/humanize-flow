@@ -46,6 +46,6 @@ draft
 
 Nested agents make permissions, logs, and failure recovery hard. humanize-flow keeps cross-agent calls in the CLI. Skills define behavior; the CLI performs orchestration.
 
-## Optional humanize integration
+## Required-by-default humanize integration
 
-humanize/RLCR is useful during implementation, especially for multi-file or high-risk changes. It is optional so the project remains usable without it.
+humanize/RLCR is the default worker path. `claude.humanize=required` makes `humanize-flow run` fail closed when no humanize integration is detected and instructs Claude to start RLCR before editing code. Teams can lower this to `auto` or `off` when a repository or environment cannot support humanize for a specific run.

@@ -7,10 +7,10 @@ humanize-flow coordinates tools that can read files, write files, and run comman
 - Planner does not edit implementation code.
 - Worker requires an approved handoff.
 - Reviewer does not implement fixes.
-- CLI does not default to full-access sandbox modes.
-- Codex review does not enable yolo or full-access mode by default.
+- Planner, commit, PR, and worker flows do not default to full Codex sandbox bypass.
+- Codex review and review-feedback default to yolo mode with `--dangerously-bypass-approvals-and-sandbox` to avoid approval prompts blocking the review loop.
 - Claude Code worker runs default to permission mode `auto`, not full permission bypass.
-- humanize/RLCR is optional and should not require unsafe permissions by default.
+- Claude Code worker runs default to `claude.humanize=required`; if humanize is unavailable, lower the mode explicitly instead of silently bypassing the loop.
 
 ## Approval gate
 
@@ -26,9 +26,11 @@ Brief Beads descriptions are not enough authority for implementation. Worker and
 
 ## Permission guidance
 
-Use least privilege. For planning, `codex exec --sandbox workspace-write` is enough to write planning artifacts. For review, read-only behavior is preferred when practical. If the active Codex sandbox cannot read the repository files, handoff, plan, acceptance criteria, Beads task, or diff needed for review, the reviewer should return `blocked` and name the missing evidence.
+Use least privilege for planning: `codex exec --sandbox workspace-write` is enough to write planning artifacts. Review and review-feedback default to yolo mode because they need reliable repository inspection and may write review artifacts without stopping for approval prompts. This passes Codex `--dangerously-bypass-approvals-and-sandbox`, so use it only in trusted, externally isolated repositories. You can reduce that default with `humanize-flow config set review.yolo false` or `HUMANIZE_FLOW_REVIEW_YOLO=false`, and then control the sandbox with `humanize-flow config set review.sandbox workspace-write`, `HUMANIZE_FLOW_REVIEW_SANDBOX=workspace-write`, or a one-run override such as `humanize-flow review <id> --sandbox read-only`.
 
 For Claude Code, the default worker permission mode is `auto` so approved tasks can proceed without prompting for every file edit. This is intentionally different from `bypassPermissions` or `--dangerously-skip-permissions`, which should remain an explicit local choice only.
+
+The default humanize mode is `required`. This means `humanize-flow run` preflights for a humanize command, Claude plugin, or installed Codex humanize skill script, and the worker prompt requires Claude to start humanize/RLCR before editing code. Use `humanize-flow config set claude.humanize auto` for an advisory mode, or `off` only when you intentionally want direct implementation plus Humanize Flow review.
 
 Set `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` or `humanize-flow config set claude.permission_mode <mode>` to match your local policy. Avoid dangerous permission bypass modes as defaults.
 

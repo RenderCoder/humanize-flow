@@ -106,4 +106,12 @@ humanize-flow review rti-tek-miniapp-copy-63g
 
 ## humanize 不可用
 
-Worker 仍可直接实现并请求 Codex review。humanize/RLCR 是增强能力，不是硬依赖。
+Worker 默认使用 `claude.humanize=required`，所以当检测不到 humanize 命令、Claude 插件或已安装的 Codex humanize skill 脚本时，`humanize-flow run` 会停止。
+
+请安装 humanize，或者在明确希望不使用 humanize 时显式降低模式：
+
+```bash
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
+humanize-flow config set claude.humanize auto
+```

@@ -101,6 +101,23 @@ humanize-flow run <bd-id>
 
 The worker reads the Beads task, approved handoff, plan, and acceptance criteria. Beads text may be intentionally concise; the Markdown artifacts are the detailed execution contract. If the approved handoff, `plan.md`, or `acceptance.md` is missing, the worker should stop instead of implementing from the Beads task alone.
 
+By default, worker runs use `claude.humanize=required`. The CLI checks for a humanize command, Claude plugin, or installed Codex humanize skill script before launch, and the generated Claude prompt requires starting humanize/RLCR from the approved plan before code edits. If your environment cannot run humanize for a specific task, lower the mode explicitly:
+
+```bash
+humanize-flow run <bd-id> --humanize-mode auto
+humanize-flow run <bd-id> --no-humanize
+humanize-flow config set claude.humanize auto
+```
+
+For approved handoffs, YOLO mode can run the implementation and review loop automatically:
+
+```bash
+humanize-flow run <bd-id> --yolo
+humanize-flow run <bd-id> --yolo --max-round 5
+```
+
+YOLO mode forces Claude Code permission mode `auto`, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds.
+
 ## 5. Review with Codex
 
 ```bash
@@ -115,7 +132,7 @@ The reviewer checks the implementation against the approved artifacts and return
 
 Missing handoff, plan, or acceptance evidence should produce `blocked`, not `pass`.
 
-The CLI does not enable yolo or full-access permissions for Codex review by default. Review should rely on read access to the repository, handoff, plan, acceptance criteria, Beads task, and diff; if that evidence cannot be read under the active Codex sandbox, the correct result is `blocked`.
+Codex review and review-feedback default to yolo mode with `--dangerously-bypass-approvals-and-sandbox` to avoid approval prompts blocking the loop. Use `humanize-flow config set review.yolo false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, or `--no-yolo` when you need stricter isolation; then control sandboxing with `humanize-flow config set review.sandbox <mode>`, `HUMANIZE_FLOW_REVIEW_SANDBOX`, or `--sandbox <mode>`.
 
 When the verdict is `pass`, the report includes a human verification guide. Complete its manual test steps and checklist before final git delivery. A pass from Codex means the code satisfies the reviewed contract; it is not a command to commit immediately.
 

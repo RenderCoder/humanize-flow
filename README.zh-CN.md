@@ -6,7 +6,7 @@
 Codex 规划 → 人工确认 → Claude Code 执行 → Codex 审查
 ```
 
-它适合这样的使用方式：让 Codex 理解需求和制定计划，让 Claude Code 具体改代码，让 Beads (`bd`) 保存任务状态和依赖，让 humanize/RLCR 在复杂实现阶段提供迭代审查能力。
+它适合这样的使用方式：让 Codex 理解需求和制定计划，让 Claude Code 具体改代码，让 Beads (`bd`) 保存任务状态和依赖，默认让 humanize/RLCR 在实现阶段提供迭代审查能力。
 
 ## 为什么需要它
 
@@ -14,7 +14,7 @@ Codex 规划 → 人工确认 → Claude Code 执行 → Codex 审查
 
 - **Codex 负责规划**：必要时和你讨论需求，生成 Markdown 计划，准备 Beads 任务，写 handoff JSON。
 - **人类负责确认**：没有明确批准前，不开始实现。
-- **Claude Code 负责执行**：一次只执行一个已批准的任务，复杂任务可使用 humanize/RLCR。
+- **Claude Code 负责执行**：一次只执行一个已批准的任务，默认使用 humanize/RLCR，可按需关闭或改为自动模式。
 - **Codex 负责审查**：对照计划、验收标准、测试和 git diff 进行 review。
 - **CLI 负责编排**：安装、初始化、批准、创建 bd 任务、调用 worker、调用 reviewer、查看状态。
 
@@ -75,6 +75,7 @@ $humanize-flow-planner
 ```bash
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
+humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
 humanize-flow review-feedback <bd-id>
 humanize-flow commit
@@ -82,11 +83,13 @@ humanize-flow push
 humanize-flow pr
 ```
 
-Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-opus-4-7`，权限模式为 `auto`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值；`review` 默认不会开启 yolo 或 full-access 模式。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
+Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `auto`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值；review 和 review-feedback 默认使用 yolo 模式，也就是传给 Codex `--dangerously-bypass-approvals-and-sandbox`，可用 `review.yolo=false`、`HUMANIZE_FLOW_REVIEW_YOLO=false`、`--no-yolo`、`review.sandbox`、`HUMANIZE_FLOW_REVIEW_SANDBOX` 或 `--sandbox` 降低权限。在 `required` 模式下，worker prompt 会要求 Claude 在改代码前基于已批准 plan 启动 humanize/RLCR；如果 humanize 不可用，可用 `--humanize-mode auto`、`--no-humanize`、`HUMANIZE_FLOW_CLAUDE_HUMANIZE` 或 `humanize-flow config set claude.humanize <mode>` 降低模式。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
+
+对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `auto`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。可用 `--max-round N` 覆盖上限。
 
 Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，把草稿保存在 `.humanize-flow/runs/`，然后用 `gh pr create` 创建 PR。
 
@@ -155,16 +158,16 @@ CLI 本身需要：
 - Codex CLI
 - Claude Code CLI
 - Beads (`bd`)
-- humanize 插件或 skills，可选，但复杂实现很有用
+- humanize 插件或 skills，worker 默认要求可用
 
 ## 安全默认值
 
 - planner 不修改业务实现代码。
 - worker 拒绝执行未批准的 handoff。
 - reviewer 不负责修复，只负责审查。
-- CLI 默认不使用 full-access sandbox。
-- Codex review 默认不开 yolo；如果当前 sandbox 无法读取必要证据，review 应返回 blocked。
-- 高权限模式只应在可信、隔离环境中使用。
+- Planner、commit、PR 和 worker 流程默认不会完全绕过 Codex sandbox。
+- Codex review 和 review-feedback 默认使用 yolo 模式，也就是 `--dangerously-bypass-approvals-and-sandbox`，避免 review 循环被权限提示阻塞；需要更严格隔离时用 `review.yolo=false` 或 `--no-yolo` 降低权限。
+- 高权限模式只应在可信、外部隔离的环境中使用。
 
 ## 文档
 
