@@ -4,6 +4,14 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.5.1] - 2026-05-09
+
+### Changed
+
+- Strengthen `humanize-flow pr` so PR drafts prioritize WHY/context over HOW/WHAT, include passing review `Human verification guide` content for reviewer reference, and pass an explicit `gh pr create --repo` target selected from Git remotes.
+- Make `humanize-flow pr` preflight `gh auth status`, save `gh pr create` stdout/stderr, and print/save the resulting pull request URL.
+- Make `humanize-flow commit` write `selected-diff.patch` and `selected-diffstat.txt`, then open the selected diff preview before interactive commit confirmation so users can inspect file-level changes before pressing `q` and approving.
+
 ## [0.5.0] - 2026-05-09
 
 ### Added

@@ -91,9 +91,9 @@ humanize-flow run <bd-id> --interactive
 
 Use `humanize-flow run <bd-id> --yolo` for an approved handoff when you want the CLI to force Claude Code permission mode `auto`, force Codex review yolo mode, and repeat Claude correction plus Codex review until the review passes or the 3-round default limit is reached. Override the limit with `--max-round N`.
 
-After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language, saves the draft under `.humanize-flow/runs/`, and creates the PR with `gh pr create`.
+After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language with WHY/context prioritized over HOW/WHAT, includes passing review `Human verification guide` content as reviewer-facing validation context, saves the draft under `.humanize-flow/runs/`, prompts for the GitHub remote when multiple remotes exist, and creates the PR with `gh pr create --repo`.
 
-Codex `pass` reviews include a human verification guide. Complete that manual checklist before commit/push. If manual testing finds a problem or corrects the review scope, run `humanize-flow review-feedback <bd-id>`; the CLI opens your editor for feedback and then produces an updated combined Codex + human review verdict.
+Codex `pass` reviews include a human verification guide. Complete that manual checklist before commit/push/PR. If manual testing finds a problem or corrects the review scope, run `humanize-flow review-feedback <bd-id>`; the CLI opens your editor for feedback and then produces an updated combined Codex + human review verdict.
 
 ## Planning from an existing Beads task
 
@@ -151,6 +151,7 @@ Required for the CLI itself:
 - Bash
 - Git
 - Python 3
+- GitHub CLI (`gh`) for `humanize-flow pr`; run `gh auth login -h github.com` before creating PRs
 - `jq` recommended
 
 Recommended workflow tools:

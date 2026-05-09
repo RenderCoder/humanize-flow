@@ -91,9 +91,9 @@ humanize-flow run <bd-id> --interactive
 
 对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `auto`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。可用 `--max-round N` 覆盖上限。
 
-Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，把草稿保存在 `.humanize-flow/runs/`，然后用 `gh pr create` 创建 PR。
+Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，并要求 WHY/context 优先于 HOW/WHAT；它会把通过 review 中的 `Human verification guide` 纳入 PR，作为 reviewer 可参考的验证上下文，把草稿保存在 `.humanize-flow/runs/`，在多个 remote 时让你选择 GitHub 仓库，然后用 `gh pr create --repo` 创建 PR。
 
-Codex `pass` review 会包含人类验证指南。提交/推送前先完成人工检查清单。如果手工测试发现问题，或者人类校正了 review scope，运行 `humanize-flow review-feedback <bd-id>`；CLI 会打开你的编辑器填写反馈，然后生成一份 Codex + 人类反馈合并后的更新 verdict。
+Codex `pass` review 会包含人类验证指南。提交/推送/创建 PR 前先完成人工检查清单。如果手工测试发现问题，或者人类校正了 review scope，运行 `humanize-flow review-feedback <bd-id>`；CLI 会打开你的编辑器填写反馈，然后生成一份 Codex + 人类反馈合并后的更新 verdict。
 
 ## 从已有 Beads 任务开始规划
 
@@ -151,6 +151,7 @@ CLI 本身需要：
 - Bash
 - Git
 - Python 3
+- GitHub CLI (`gh`)，用于 `humanize-flow pr`；创建 PR 前请先运行 `gh auth login -h github.com`
 - 推荐安装 `jq`
 
 推荐工作流工具：

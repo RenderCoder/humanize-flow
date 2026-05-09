@@ -222,7 +222,7 @@ humanize-flow commit
 humanize-flow commit --yes
 ```
 
-Codex 每次都会根据 `git status`、staged diff、unstaged diff、untracked files，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考：Codex 可以纳入相关的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，把路径列表写到 `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`，把生成的 message 写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，展示被选中 diffstat 和 message，然后只提交这些被选中的路径。传 `--yes` 时跳过确认。
+Codex 每次都会根据 `git status`、staged diff、unstaged diff、untracked files，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考：Codex 可以纳入相关的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，把路径列表写到 `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`，把生成的 message 写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，并把被选中的变更预览写到 `selected-diffstat.txt` 和 `selected-diff.patch`。在交互模式下，它会先用 pager 打开 `selected-diff.patch`；按 `q` 返回后，再确认或取消提交。命令只会提交这些被选中的路径。传 `--yes` 时跳过预览确认。
 
 如果 `git commit` 因 hook、lint、format、typecheck 或测试命令失败而失败，命令会把完整输出保存到 `.humanize-flow/runs/<timestamp>-commit/git-commit.log`。在交互终端中，它会询问是否创建一个 Beads 修复任务。Codex 会根据 hook 输出和被选中的 diff 起草任务；CLI 不会静默创建这个任务。
 
@@ -248,7 +248,11 @@ humanize-flow pr --draft --push --yes
 humanize-flow pr --dry-run
 ```
 
-该命令会检查当前分支提交、diff、Humanize Flow 产物、handoff、实现总结、review 报告和仓库约束。它会让 Codex 生成结构化 PR 草稿，写入 `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` 和 `pr-body.md`，展示草稿后调用 `gh pr create --title ... --body-file ...`。
+该命令会检查当前分支提交、diff、Humanize Flow 产物、handoff、实现总结、review 报告和仓库约束。它会让 Codex 生成结构化 PR 草稿，写入 `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` 和 `pr-body.md`，展示草稿后调用 `gh pr create --repo ... --title ... --body-file ...`。
+
+PR 提示词会要求 WHY 优先于 HOW 和 WHAT：正文应先说明问题、用户或维护者影响、约束条件、决策理由，再说明实现细节。如果通过的 Codex review 报告包含 `Human verification guide`，命令会把这些片段提供给 Codex；如果草稿遗漏，也会自动追加到 PR body，方便 reviewer 在 PR 中看到人工测试清单和停止条件。
+
+`humanize-flow pr` 依赖 GitHub CLI (`gh`)，创建前会检查 `gh auth status`。它只通过 `gh pr create` 创建 PR；如果该命令失败，会把 stdout 和 stderr 保存到本次 run 目录，方便排查。
 
 选项：
 
@@ -256,9 +260,11 @@ humanize-flow pr --dry-run
 - `--head <branch>`：PR 来源分支，默认当前分支。
 - `--draft`：创建 draft PR。
 - `--push`：创建 PR 前先推送当前分支。
-- `--remote <name>`：`--push` 使用的 remote。
+- `--remote <name>`：PR 创建使用的 GitHub remote/repository，同时也是 `--push` 使用的 remote。
 - `--yes`：展示生成的 PR 草稿后跳过确认。
 - `--dry-run`：只生成并展示草稿，不创建 PR。
+
+如果只有一个 remote，CLI 会用它作为 `gh pr create --repo` 的 GitHub 仓库。如果有多个 remote，会列出 remote 名称和 URL，并要求输入数字或 remote 名称。非交互模式下请传 `--remote`。
 
 PR 标题和正文遵循 `humanize-flow i18n` 或 `HUMANIZE_FLOW_LANGUAGE` 配置的工作流语言。文件路径、命令、label、JSON key、API、Beads ID、分支名和 commit hash 保持原始形式。
 

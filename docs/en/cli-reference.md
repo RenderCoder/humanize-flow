@@ -222,7 +222,7 @@ humanize-flow commit
 humanize-flow commit --yes
 ```
 
-Codex always selects which changed file paths belong in the commit based on `git status`, staged diff, unstaged diff, untracked files, and repository guidance such as `AGENTS.md` or `CLAUDE.md`. Existing staged changes are advisory context only: Codex may include related unstaged paths and exclude accidentally staged paths. The CLI stages the selected paths, writes them to `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, shows the selected diffstat and message, and commits only those selected paths unless the confirmation is rejected. Pass `--yes` to skip the confirmation prompt.
+Codex always selects which changed file paths belong in the commit based on `git status`, staged diff, unstaged diff, untracked files, and repository guidance such as `AGENTS.md` or `CLAUDE.md`. Existing staged changes are advisory context only: Codex may include related unstaged paths and exclude accidentally staged paths. The CLI stages the selected paths, writes them to `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, and writes the selected change preview to `selected-diffstat.txt` and `selected-diff.patch`. In interactive mode, it opens `selected-diff.patch` in your pager before confirmation; press `q` to return, then approve or reject the commit. The command commits only the selected paths unless the confirmation is rejected. Pass `--yes` to skip the preview confirmation prompt.
 
 If `git commit` fails because a hook, linter, formatter, typecheck, or test command fails, the command saves the full output to `.humanize-flow/runs/<timestamp>-commit/git-commit.log`. In an interactive terminal, it then asks whether to create a Beads task for fixing the hook failure. Codex drafts the task from the hook output and selected diff; the CLI does not create this task silently.
 
@@ -248,7 +248,11 @@ humanize-flow pr --draft --push --yes
 humanize-flow pr --dry-run
 ```
 
-The command inspects the branch commits, diff, Humanize Flow artifacts, handoffs, implementation summaries, review reports, and repository guidance. It asks Codex for a structured PR draft, writes `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` and `pr-body.md`, shows the draft, then calls `gh pr create --title ... --body-file ...`.
+The command inspects the branch commits, diff, Humanize Flow artifacts, handoffs, implementation summaries, review reports, and repository guidance. It asks Codex for a structured PR draft, writes `.humanize-flow/runs/<timestamp>-pr/pr-title.txt` and `pr-body.md`, shows the draft, then calls `gh pr create --repo ... --title ... --body-file ...`.
+
+The PR prompt prioritizes WHY over HOW and WHAT: the body should explain the problem, user or maintainer impact, constraints, decision rationale, and then the implementation details. When passing Codex review reports contain a `Human verification guide`, the command provides those guide snippets to Codex and also appends them to the PR body if the draft omits them, so reviewers can see the manual-test checklist and stop conditions in the PR.
+
+`humanize-flow pr` requires GitHub CLI (`gh`) and checks `gh auth status` before creation. It creates the PR only through `gh pr create`; if that command fails, stdout and stderr are saved in the run directory for troubleshooting.
 
 Options:
 
@@ -256,9 +260,11 @@ Options:
 - `--head <branch>`: PR head branch. Defaults to the current branch.
 - `--draft`: create a draft PR.
 - `--push`: push the current branch before creating the PR.
-- `--remote <name>`: remote used by `--push`.
+- `--remote <name>`: GitHub remote/repository used for PR creation and by `--push`.
 - `--yes`: skip confirmation after showing the generated PR draft.
 - `--dry-run`: generate and show the draft without creating the PR.
+
+If exactly one remote exists, the CLI uses it as the GitHub repository for `gh pr create --repo`. If multiple remotes exist, it lists their names and URLs and asks for a number or remote name. In non-interactive mode, pass `--remote`.
 
 The PR title and body follow the configured workflow language from `humanize-flow i18n` or `HUMANIZE_FLOW_LANGUAGE`. File paths, commands, labels, JSON keys, APIs, Beads IDs, branch names, and commit hashes stay canonical.
 

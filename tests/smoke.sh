@@ -139,12 +139,18 @@ cat > "$TMP/fake-bin/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" > "$GH_ARGS_CAPTURE"
+if [ -n "${GH_ARGS_CAPTURE_APPEND:-}" ]; then
+  printf '%s\n' "$*" >> "$GH_ARGS_CAPTURE_APPEND"
+fi
 case "$*" in
+  *"auth status"*)
+    printf 'github.com: authenticated\n'
+    ;;
   *"pr create"*)
     printf 'https://github.com/example/repo/pull/1\n'
     ;;
   *)
-    printf 'fake gh only supports pr create\n' >&2
+    printf 'fake gh only supports auth status and pr create\n' >&2
     exit 2
     ;;
 esac
@@ -304,17 +310,31 @@ PY
   printf 'pr\n' > pr-change.txt
   git add pr-change.txt
   git commit -qm 'Add PR smoke change'
-  HUMANIZE_FLOW_LANGUAGE=zh CODEX_ARGS_CAPTURE="$TMP/codex-pr-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --yes >/dev/null
+  git remote add origin git@github.com:example/repo.git
+  HUMANIZE_FLOW_LANGUAGE=zh CODEX_ARGS_CAPTURE="$TMP/codex-pr-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --yes >"$TMP/pr.stdout"
   grep -q 'language code: zh' "$TMP/codex-pr-args.txt"
+  grep -q 'Prioritize WHY over HOW and WHAT' "$TMP/codex-pr-args.txt"
+  grep -q 'Human verification guide' "$TMP/codex-pr-args.txt"
+  grep -q 'Run smoke checks' "$TMP/codex-pr-args.txt"
   grep -q -- 'pr create --base main --head feature/pr-smoke' "$TMP/gh-pr-args.txt"
+  grep -q -- '--repo example/repo' "$TMP/gh-pr-args.txt"
   grep -q -- '--title 完善 Humanize Flow 执行链路' "$TMP/gh-pr-args.txt"
+  grep -q 'Pull request URL: https://github.com/example/repo/pull/1' "$TMP/pr.stdout"
   grep -R '## 摘要' .humanize-flow/runs/*/pr-body.md >/dev/null
+  grep -R '^https://github.com/example/repo/pull/1$' .humanize-flow/runs/*/pr-url.txt >/dev/null
+  grep -R '## 人工验证指南' .humanize-flow/runs/*/pr-body.md >/dev/null
+  grep -R 'Run smoke checks' .humanize-flow/runs/*/pr-body.md >/dev/null
   CODEX_ARGS_CAPTURE="$TMP/codex-pr-dry-run-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-dry-run-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --dry-run >/dev/null
+  git remote add upstream git@github.com:example/upstream.git
+  printf '2\n' | HUMANIZE_FLOW_LANGUAGE=zh CODEX_ARGS_CAPTURE="$TMP/codex-pr-multi-remote-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-multi-remote-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --yes >/dev/null
+  grep -q -- '--repo example/upstream' "$TMP/gh-pr-multi-remote-args.txt"
   printf 'change\n' > commit-test.txt
   CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >/dev/null
   git log -1 --pretty=%B | grep -q 'fake review'
   git show --name-only --pretty='' HEAD | grep -q '^commit-test.txt$'
   grep -R '^commit-test.txt$' .humanize-flow/runs/*/commit-paths.txt >/dev/null
+  grep -R '^diff --git a/commit-test.txt b/commit-test.txt' .humanize-flow/runs/*/selected-diff.patch >/dev/null
+  grep -R 'commit-test.txt' .humanize-flow/runs/*/selected-diffstat.txt >/dev/null
   printf '#!/usr/bin/env bash\nprintf "lefthook pre-commit failed: eslint not found\\n" >&2\nexit 1\n' > .git/hooks/pre-commit
   chmod +x .git/hooks/pre-commit
   printf 'again\n' >> commit-test.txt
@@ -328,7 +348,7 @@ PY
   grep -q 'commit-hook' "$TMP/bd-create-args.txt"
   test "$(find .humanize-flow/runs -name git-commit.log -print | wc -l | tr -d ' ')" -gt 0
   git init --bare "$TMP/remote.git" >/dev/null
-  git remote add origin "$TMP/remote.git"
-  "$ROOT/bin/humanize-flow" push >/dev/null
+  git remote set-url origin "$TMP/remote.git"
+  "$ROOT/bin/humanize-flow" push --remote origin >/dev/null
 )
 printf '[smoke] OK\n'

@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.0"
+HF_VERSION="0.5.1"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"
@@ -725,7 +725,7 @@ cmd_doctor() {
   info "review yolo: $(review_yolo_default)"
   info "review sandbox: $(review_sandbox_default)"
 
-  for bin in git python3 codex claude bd jq; do
+  for bin in git python3 gh codex claude bd jq; do
     if command_exists "$bin"; then
       printf '  OK   %-10s %s\n' "$bin" "$(command -v "$bin")"
     else
@@ -773,6 +773,14 @@ cmd_doctor() {
       failures=$((failures + 1))
     else
       printf '  WARN humanize integration not detected (claude.humanize=$(claude_humanize_default))\n'
+    fi
+  fi
+
+  if command_exists gh; then
+    if gh auth status >/dev/null 2>&1; then
+      printf '  OK   gh auth status\n'
+    else
+      printf '  WARN gh auth status failed; run gh auth login before using humanize-flow pr\n'
     fi
   fi
 
@@ -2127,13 +2135,35 @@ commit_failure_looks_hook_related() {
   grep -Eiq '(hook|pre-commit|pre commit|lefthook|husky|lint-staged|eslint|prettier|typecheck|tsc|biome|stylelint|test)' "$log_file"
 }
 
-show_selected_cached_stat() {
-  local paths_file path
+write_selected_cached_changes() {
+  local paths_file stat_file diff_file path
   paths_file="$1"
+  stat_file="$2"
+  diff_file="$3"
+  : > "$stat_file"
+  : > "$diff_file"
   while IFS= read -r path || [ -n "$path" ]; do
     [ -n "$path" ] || continue
-    git diff --cached --stat -- "$path"
+    git diff --cached --stat -- "$path" >> "$stat_file"
+    git diff --cached --binary -- "$path" >> "$diff_file"
   done < "$paths_file"
+}
+
+open_file_in_pager() {
+  local file pager_cmd
+  file="$1"
+  if [ -n "${PAGER:-}" ]; then
+    pager_cmd="$PAGER"
+  elif command_exists less; then
+    pager_cmd="less -R"
+  else
+    pager_cmd="cat"
+  fi
+  if [ "$pager_cmd" = "cat" ]; then
+    cat "$file"
+  else
+    sh -c "$pager_cmd \"\$1\"" sh "$file"
+  fi
 }
 
 create_commit_failure_bd() {
@@ -2266,7 +2296,7 @@ handle_commit_failure() {
 
 cmd_commit() {
   require_git_repo
-  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file selected_count path commit_log commit_status answer
+  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file stat_file diff_file selected_count path commit_log commit_status answer
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
@@ -2290,6 +2320,8 @@ EOF
   stage_prompt_file="$run_dir/codex-stage-prompt.md"
   stage_paths_file="$run_dir/stage-paths.txt"
   commit_paths_file="$run_dir/commit-paths.txt"
+  stat_file="$run_dir/selected-diffstat.txt"
+  diff_file="$run_dir/selected-diff.patch"
   if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
     die "No changes to commit."
   fi
@@ -2384,8 +2416,22 @@ EOF
   rm -f "$message_file.bak"
   first_line="$(sed -n '1p' "$message_file")"
   [ -n "$first_line" ] || die "Codex returned an empty commit message."
+  write_selected_cached_changes "$commit_paths_file" "$stat_file" "$diff_file"
   info "selected changes:"
-  show_selected_cached_stat "$commit_paths_file"
+  if [ -s "$stat_file" ]; then
+    cat "$stat_file"
+  else
+    warn "No cached diffstat was produced for selected paths."
+  fi
+  if [ -s "$diff_file" ]; then
+    info "selected diff: $diff_file"
+    if [ "$yes" -ne 1 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
+      info "opening selected diff preview; press q to return to the commit confirmation prompt."
+      open_file_in_pager "$diff_file"
+    fi
+  else
+    warn "No cached diff content was produced for selected paths."
+  fi
   info "commit message: $message_file"
   log ""
   sed -n '1,120p' "$message_file"
@@ -2410,9 +2456,193 @@ EOF
   cat "$commit_log"
 }
 
+select_git_remote() {
+  local provided purpose remotes count idx answer remote
+  provided="$1"
+  purpose="$2"
+  if [ -n "$provided" ]; then
+    if ! git remote get-url "$provided" >/dev/null 2>&1; then
+      die "Unknown remote: $provided"
+    fi
+    printf '%s\n' "$provided"
+    return 0
+  fi
+  remotes="$(git remote)"
+  count="$(printf '%s\n' "$remotes" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [ "$count" -gt 0 ] || die "No git remotes configured."
+  if [ "$count" -eq 1 ]; then
+    printf '%s\n' "$remotes" | sed '/^$/d' | sed -n '1p'
+    return 0
+  fi
+  printf 'Available remotes for %s:\n' "$purpose" >&2
+  idx=1
+  while IFS= read -r remote; do
+    [ -n "$remote" ] || continue
+    printf '  %s. %s  %s\n' "$idx" "$remote" "$(git remote get-url "$remote")" >&2
+    idx=$((idx + 1))
+  done <<EOF
+$remotes
+EOF
+  if [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" = "1" ]; then
+    die "Multiple remotes configured; pass --remote NAME in non-interactive mode."
+  fi
+  printf 'Select remote number or name for %s: ' "$purpose" >&2
+  read -r answer
+  if printf '%s\n' "$answer" | grep -Eq '^[0-9]+$'; then
+    [ "$answer" -ge 1 ] || die "Invalid remote selection: $answer"
+    remote="$(printf '%s\n' "$remotes" | sed '/^$/d' | awk -v n="$answer" 'NR == n { print; exit }')"
+  else
+    remote="$answer"
+  fi
+  [ -n "$remote" ] || die "Invalid remote selection."
+  if ! git remote get-url "$remote" >/dev/null 2>&1; then
+    die "Unknown remote: $remote"
+  fi
+  printf '%s\n' "$remote"
+}
+
+repo_arg_from_remote() {
+  local remote url repo
+  remote="$1"
+  url="$(git remote get-url "$remote")"
+  repo="$(python3 - "$url" <<'PY'
+import re
+import sys
+from urllib.parse import unquote, urlparse
+
+url = sys.argv[1].strip()
+host = ""
+path = ""
+
+if "://" not in url:
+    match = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", url)
+    if match:
+        host = match.group(1)
+        path = match.group(2)
+else:
+    parsed = urlparse(url)
+    if parsed.scheme in {"git", "http", "https", "ssh"}:
+        host = parsed.hostname or ""
+        path = parsed.path.lstrip("/")
+
+parts = [unquote(part) for part in path.strip("/").split("/") if part]
+if not host or len(parts) < 2:
+    raise SystemExit(1)
+
+owner = parts[0]
+repo = parts[1]
+if repo.endswith(".git"):
+    repo = repo[:-4]
+if not owner or not repo:
+    raise SystemExit(1)
+
+if host in {"github.com", "www.github.com"}:
+    print(f"{owner}/{repo}")
+else:
+    print(f"{host}/{owner}/{repo}")
+PY
+)" || die "Remote '$remote' is not a GitHub-style repository URL usable with gh: $url"
+  [ -n "$repo" ] || die "Remote '$remote' is not a GitHub-style repository URL usable with gh: $url"
+  printf '%s\n' "$repo"
+}
+
+collect_pr_human_verification_guides() {
+  local output_file
+  output_file="$1"
+  python3 - "$(repo_root)" "$output_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+review_paths = []
+
+for handoff in sorted((root / ".humanize-flow" / "handoffs").glob("*.json")):
+    try:
+        data = json.loads(handoff.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    latest = (data.get("artifacts") or {}).get("latest_review")
+    if latest:
+        path = root / latest
+        if path.exists():
+            review_paths.append(path)
+
+for path in sorted((root / "docs" / "humanize-flow").glob("*/reviews/*.md")):
+    review_paths.append(path)
+
+seen = set()
+sections = []
+verdict_heading = r"(?:Verdict|评审结论|審查結論|评审结果|審查結果|结论|結論)"
+guide_heading = r"(?:Human verification guide|人工验证指南|人工驗證指南|人工测试指南|人工測試指南|手工验证指南|手工驗證指南|手工测试指南|手工測試指南|人类验证指南|人類驗證指南)"
+for path in review_paths:
+    path = path.resolve()
+    if path in seen or not path.exists():
+        continue
+    seen.add(path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    verdict_match = re.search(rf"(?ims)^##\s*{verdict_heading}\b(?P<body>.*?)(?:^##\s+|\Z)", text)
+    if not verdict_match or not re.search(r"(?i)(?:`|\b)pass(?:`|\b)", verdict_match.group("body")):
+        continue
+    guide_match = re.search(
+        rf"(?ims)^#{{1,6}}\s*{guide_heading}\b.*?(?=^#{{1,6}}\s+|\Z)",
+        text,
+    )
+    if not guide_match:
+        continue
+    section = guide_match.group(0).strip()
+    if not section:
+        continue
+    rel = path.relative_to(root)
+    sections.append((rel.as_posix(), section))
+
+lines = []
+for rel, section in sections:
+    lines.append(f"### {rel}")
+    lines.append("")
+    lines.append(section)
+    lines.append("")
+
+output.write_text("\n".join(lines).rstrip() + ("\n" if lines else ""), encoding="utf-8")
+PY
+}
+
+append_pr_human_verification_guide_if_missing() {
+  local body_file guides_file lang
+  body_file="$1"
+  guides_file="$2"
+  lang="$(language_default)"
+  [ -s "$guides_file" ] || return 0
+  python3 - "$body_file" "$guides_file" "$lang" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+body_path = Path(sys.argv[1])
+guides_path = Path(sys.argv[2])
+lang = sys.argv[3]
+body = body_path.read_text(encoding="utf-8")
+guides = guides_path.read_text(encoding="utf-8").strip()
+if not guides:
+    raise SystemExit(0)
+if re.search(r"(?i)human verification guide|人工验证|人工測試|手工验证|手工測試", body):
+    raise SystemExit(0)
+if lang == "zh":
+    heading = "## 人工验证指南"
+    intro = "以下内容来自 Humanize Flow 通过的 review 报告，供 PR 审核和人工测试参考。"
+else:
+    heading = "## Human verification guide"
+    intro = "The following guidance comes from passing Humanize Flow review reports and is included for reviewer and manual-test reference."
+addition = f"\n\n{heading}\n\n{intro}\n\n{guides}\n"
+body_path.write_text(body.rstrip() + addition, encoding="utf-8")
+PY
+}
+
 cmd_push() {
   require_git_repo
-  local remote="" branch remotes count idx answer
+  local remote="" branch
   while [ $# -gt 0 ]; do
     case "$1" in
       --remote) shift; remote="${1:-}" ;;
@@ -2422,7 +2652,7 @@ Usage:
   humanize-flow push [--remote NAME]
 
 Pushes the current branch. If no remote is provided and more than one remote
-exists, prompts for a remote number.
+exists, prompts for a remote number or name.
 EOF
         return 0 ;;
       *) die "Unknown push option: $1" ;;
@@ -2431,37 +2661,9 @@ EOF
   done
   branch="$(git branch --show-current)"
   [ -n "$branch" ] || die "Cannot determine current branch."
+  remote="$(select_git_remote "$remote" "push")"
   if [ -z "$remote" ]; then
-    remotes="$(git remote)"
-    count="$(printf '%s\n' "$remotes" | sed '/^$/d' | wc -l | tr -d ' ')"
-    [ "$count" -gt 0 ] || die "No git remotes configured."
-    if [ "$count" -eq 1 ]; then
-      remote="$(printf '%s\n' "$remotes" | sed '/^$/d' | sed -n '1p')"
-    else
-      log "Available remotes:"
-      idx=1
-      while IFS= read -r r; do
-        [ -n "$r" ] || continue
-        printf '  %s. %s\n' "$idx" "$r"
-        idx=$((idx + 1))
-      done <<EOF
-$remotes
-EOF
-      if [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" = "1" ]; then
-        die "Multiple remotes configured; pass --remote NAME in non-interactive mode."
-      fi
-      printf 'Select remote number or name: '
-      read -r answer
-      if printf '%s\n' "$answer" | grep -Eq '^[0-9]+$'; then
-        remote="$(printf '%s\n' "$remotes" | sed '/^$/d' | sed -n "${answer}p")"
-      else
-        remote="$answer"
-      fi
-      [ -n "$remote" ] || die "Invalid remote selection."
-    fi
-  fi
-  if ! git remote get-url "$remote" >/dev/null 2>&1; then
-    die "Unknown remote: $remote"
+    die "No remote selected."
   fi
   info "pushing $branch to $remote"
   git push -u "$remote" "$branch"
@@ -2493,7 +2695,7 @@ guess_pr_base() {
 
 cmd_pr() {
   require_git_repo
-  local base="" head="" draft=0 dry_run=0 yes=0 push_first=0 remote="" run_dir prompt_file draft_file title_file body_file prompt_text branch merge_base pr_url answer
+  local base="" head="" draft=0 dry_run=0 yes=0 push_first=0 remote="" pr_remote="" pr_repo="" run_dir prompt_file draft_file title_file body_file guides_file pr_output_file pr_error_file pr_url_file prompt_text branch merge_base pr_output pr_url answer pr_status
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) shift; base="${1:-}" ;;
@@ -2516,7 +2718,7 @@ Options:
   --base BRANCH   Base branch for the PR. Defaults to branch gh-merge-base,
                   origin/HEAD, main, then master.
   --head BRANCH   Head branch for the PR. Defaults to the current branch.
-  --remote NAME   Remote used by --push.
+  --remote NAME   GitHub remote/repository used for PR creation and by --push.
   --draft         Create a draft PR.
   --push          Push the current branch before creating the PR.
   --yes, -y       Skip confirmation after showing the generated PR draft.
@@ -2531,6 +2733,9 @@ EOF
   command_exists codex || die "codex CLI not found."
   if [ "$dry_run" -ne 1 ]; then
     command_exists gh || die "GitHub CLI 'gh' not found."
+    if ! gh auth status >/dev/null 2>&1; then
+      die "GitHub CLI authentication check failed. Run 'gh auth login -h github.com' and retry humanize-flow pr."
+    fi
   fi
   branch="$(git branch --show-current)"
   [ -n "$branch" ] || die "Cannot determine current branch."
@@ -2543,8 +2748,17 @@ EOF
     die "No commits or diff found between $base and HEAD."
   fi
 
-  if [ "$push_first" -eq 1 ]; then
-    if [ -n "$remote" ]; then cmd_push --remote "$remote"; else cmd_push; fi
+  if [ "$push_first" -eq 1 ] && [ "$dry_run" -eq 1 ]; then
+    warn "--dry-run set; skipping --push."
+  fi
+  if [ "$dry_run" -ne 1 ]; then
+    pr_remote="$(select_git_remote "$remote" "GitHub PR creation")"
+  fi
+  if [ "$push_first" -eq 1 ] && [ "$dry_run" -ne 1 ]; then
+    cmd_push --remote "$pr_remote"
+  fi
+  if [ "$dry_run" -ne 1 ]; then
+    pr_repo="$(repo_arg_from_remote "$pr_remote")"
   fi
 
   run_dir="$(state_dir)/runs/$(timestamp)-pr"
@@ -2553,6 +2767,11 @@ EOF
   draft_file="$run_dir/pr-draft.json"
   title_file="$run_dir/pr-title.txt"
   body_file="$run_dir/pr-body.md"
+  guides_file="$run_dir/human-verification-guides.md"
+  pr_output_file="$run_dir/gh-pr-create-output.txt"
+  pr_error_file="$run_dir/gh-pr-create-error.txt"
+  pr_url_file="$run_dir/pr-url.txt"
+  collect_pr_human_verification_guides "$guides_file"
 
   cat > "$prompt_file" <<EOF
 You are drafting a professional GitHub pull request for this repository.
@@ -2560,8 +2779,10 @@ You are drafting a professional GitHub pull request for this repository.
 Base branch: $base
 Head branch: $head
 Merge base: $merge_base
+GitHub repository: ${pr_repo:-"(dry run or inferred by gh)"}
 PR title output: $title_file
 PR body output: $body_file
+Human verification guide source snippets: $guides_file
 
 $(language_instruction)
 
@@ -2574,6 +2795,10 @@ Inspect:
 - docs/humanize-flow artifacts relevant to this branch, especially request.md, plan.md, acceptance.md, implementation summaries, and review reports.
 - .humanize-flow/handoffs/*.json when relevant.
 - AGENTS.md and CLAUDE.md when present.
+- Human verification guide source snippets below, when present.
+
+Human verification guide source snippets:
+$(if [ -s "$guides_file" ]; then cat "$guides_file"; else printf 'None found.\n'; fi)
 
 Return only JSON with this shape:
 {
@@ -2583,8 +2808,10 @@ Return only JSON with this shape:
 
 PR body requirements:
 - Be detailed enough for a maintainer to review without reconstructing context from scratch.
-- Include sections for summary, why/context, notable changes, verification, risks/rollback, and reviewer notes.
+- Prioritize WHY over HOW and WHAT: explain the problem, user or maintainer impact, constraints, decision rationale, and why this branch is the right change before listing implementation details.
+- Include mature, conventional sections for Summary, Why / Context, Notable Changes, Verification, Human verification guide, Risks / Rollback, and Reviewer Notes. Localize section titles to the configured language.
 - Mention Humanize Flow handoff, Beads task ids, plan, acceptance, implementation summary, and review artifact paths when relevant.
+- If any passing Codex review report includes a "Human verification guide", include that guide in the PR body as reviewer-facing validation context. Preserve concrete manual test steps, checklist items, stop conditions, and source review artifact paths. Do not mark checklist items complete unless the repository evidence proves completion.
 - Use concrete test commands and outcomes when visible. If verification is not visible, say that honestly.
 - Do not invent issue numbers, test results, reviewers, or external facts.
 - Keep machine-readable literals canonical: file paths, commands, labels, JSON keys, APIs, Beads IDs, branch names, and commit hashes.
@@ -2620,6 +2847,7 @@ if not body:
 title_path.write_text(title.splitlines()[0].strip() + "\n", encoding="utf-8")
 body_path.write_text(body.rstrip() + "\n", encoding="utf-8")
 PY
+  append_pr_human_verification_guide_if_missing "$body_file" "$guides_file"
 
   info "PR title: $title_file"
   info "PR body: $body_file"
@@ -2643,12 +2871,36 @@ PY
     esac
   fi
 
+  set +e
   if [ "$draft" -eq 1 ]; then
-    pr_url="$(gh pr create --base "$base" --head "$head" --title "$(cat "$title_file")" --body-file "$body_file" --draft)"
+    gh pr create --base "$base" --head "$head" --repo "$pr_repo" --title "$(cat "$title_file")" --body-file "$body_file" --draft > "$pr_output_file" 2> "$pr_error_file"
   else
-    pr_url="$(gh pr create --base "$base" --head "$head" --title "$(cat "$title_file")" --body-file "$body_file")"
+    gh pr create --base "$base" --head "$head" --repo "$pr_repo" --title "$(cat "$title_file")" --body-file "$body_file" > "$pr_output_file" 2> "$pr_error_file"
   fi
-  printf '%s\n' "$pr_url"
+  pr_status=$?
+  set -e
+  pr_output="$(cat "$pr_output_file")"
+  if [ "$pr_status" -ne 0 ]; then
+    warn "GitHub CLI failed while running gh pr create. stdout: $pr_output_file stderr: $pr_error_file"
+    if [ -s "$pr_error_file" ]; then
+      cat "$pr_error_file" >&2
+    fi
+    die "PR creation failed via GitHub CLI. This command uses gh pr create; check gh auth/network status and retry."
+  fi
+  printf '%s\n' "$pr_output" > "$pr_output_file"
+  pr_url="$(printf '%s\n' "$pr_output" | grep -Eo 'https://[^[:space:]]+' | sed -n '1p')"
+  if [ -n "$pr_url" ]; then
+    printf '%s\n' "$pr_url" > "$pr_url_file"
+    info "PR creation output: $pr_output_file"
+    info "PR URL saved: $pr_url_file"
+    printf 'Pull request URL: %s\n' "$pr_url"
+  else
+    warn "GitHub CLI did not print a pull request URL. Raw output saved: $pr_output_file"
+    if [ -n "$pr_output" ]; then
+      printf '%s\n' "$pr_output"
+    fi
+    printf 'View pull request with: gh pr view --repo %s --web\n' "$pr_repo"
+  fi
 }
 
 cmd_status() {
