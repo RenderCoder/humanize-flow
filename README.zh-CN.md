@@ -83,13 +83,13 @@ humanize-flow push
 humanize-flow pr
 ```
 
-Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `auto`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值；review 和 review-feedback 默认使用 yolo 模式，也就是传给 Codex `--dangerously-bypass-approvals-and-sandbox`，可用 `review.yolo=false`、`HUMANIZE_FLOW_REVIEW_YOLO=false`、`--no-yolo`、`review.sandbox`、`HUMANIZE_FLOW_REVIEW_SANDBOX` 或 `--sandbox` 降低权限。在 `required` 模式下，worker prompt 会要求 Claude 在改代码前基于已批准 plan 启动 humanize/RLCR；如果 humanize 不可用，可用 `--humanize-mode auto`、`--no-humanize`、`HUMANIZE_FLOW_CLAUDE_HUMANIZE` 或 `humanize-flow config set claude.humanize <mode>` 降低模式。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
+Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `bypassPermissions`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值；review 和 review-feedback 默认使用 yolo 模式，也就是传给 Codex `--dangerously-bypass-approvals-and-sandbox`，可用 `review.yolo=false`、`HUMANIZE_FLOW_REVIEW_YOLO=false`、`--no-yolo`、`review.sandbox`、`HUMANIZE_FLOW_REVIEW_SANDBOX` 或 `--sandbox` 降低权限。需要让 Claude Code 回到 classifier gate 时，可用 `--permission-mode auto`、`HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto` 或 `humanize-flow config set claude.permission_mode auto` 降低权限。在 `required` 模式下，worker prompt 会要求 Claude 在改代码前基于已批准 plan 启动 humanize/RLCR；如果 humanize 不可用，可用 `--humanize-mode auto`、`--no-humanize`、`HUMANIZE_FLOW_CLAUDE_HUMANIZE` 或 `humanize-flow config set claude.humanize <mode>` 降低模式。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
 
-对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `auto`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。可用 `--max-round N` 覆盖上限。
+对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。可用 `--max-round N` 覆盖上限。
 
 Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，并要求 WHY/context 优先于 HOW/WHAT；它会把通过 review 中的 `Human verification guide` 纳入 PR，作为 reviewer 可参考的验证上下文，把草稿保存在 `.humanize-flow/runs/`，在多个 remote 时让你选择 GitHub 仓库，然后用 `gh pr create --repo` 创建 PR。
 

@@ -112,7 +112,7 @@ humanize-flow run <bd-id> --humanize-mode auto
 humanize-flow run <bd-id> --no-humanize
 ```
 
-默认 worker 运行使用 Claude Code print 模式，内部使用 `stream-json`、partial message chunks、hook events、`--verbose`、模型 `claude-sonnet-4-6`、权限模式 `auto`，并设置 `claude.humanize=required`。终端会显示人类可读的进展日志。run 目录中会同时保存 `claude-final.md` 人类可读日志和 `claude-final.jsonl` 原始 Claude 事件流。
+默认 worker 运行使用 Claude Code print 模式，内部使用 `stream-json`、partial message chunks、hook events、`--verbose`、模型 `claude-sonnet-4-6`、权限模式 `bypassPermissions`，并设置 `claude.humanize=required`。终端会显示人类可读的进展日志。run 目录中会同时保存 `claude-final.md` 人类可读日志和 `claude-final.jsonl` 原始 Claude 事件流。需要单次降低 Claude 权限时使用 `--permission-mode auto`，需要对单条命令降低权限时使用 `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto`，需要全局降低权限时使用 `humanize-flow config set claude.permission_mode auto`。
 
 humanize 模式包括：
 
@@ -122,7 +122,7 @@ humanize 模式包括：
 
 单次运行可用 `--humanize`、`--humanize-mode required|auto|off` 或 `--no-humanize` 覆盖。全局默认值可用 `humanize-flow config set claude.humanize <mode>` 设置，单条命令也可用 `HUMANIZE_FLOW_CLAUDE_HUMANIZE` 覆盖。
 
-`--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。每一轮都会强制 Claude Code 权限模式为 `auto`，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认最多 3 轮。
+`--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。每一轮都会强制 Claude Code 权限模式为 `bypassPermissions`，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认最多 3 轮。
 
 使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 
@@ -146,7 +146,7 @@ humanize-flow config get language
 humanize-flow config set language zh
 humanize-flow config get claude.model
 humanize-flow config set claude.model claude-sonnet-4-6
-humanize-flow config set claude.permission_mode auto
+humanize-flow config set claude.permission_mode bypassPermissions
 humanize-flow config get claude.humanize
 humanize-flow config set claude.humanize required
 humanize-flow config get codex.model

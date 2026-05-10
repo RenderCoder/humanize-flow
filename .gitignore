@@ -13,3 +13,4 @@ humanize-flow.zip
 !.env.example
 .DS_Store
 .omx/
+.humanize*

@@ -4,6 +4,12 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.5.2] - 2026-05-10
+
+### Changed
+
+- Default Claude Code worker and `run --yolo` permission mode to `bypassPermissions` for fully automatic execution after handoff approval, while keeping `--permission-mode`, `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE`, and `claude.permission_mode` overrides for stricter local policies.
+
 ## [0.5.1] - 2026-05-09
 
 ### Changed

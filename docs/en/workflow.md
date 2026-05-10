@@ -116,7 +116,7 @@ humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 ```
 
-YOLO mode forces Claude Code permission mode `auto`, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds.
+YOLO mode forces Claude Code permission mode `bypassPermissions`, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds.
 
 ## 5. Review with Codex
 

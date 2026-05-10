@@ -116,7 +116,7 @@ humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 ```
 
-YOLO 模式会强制 Claude Code 权限模式为 `auto`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认最多 3 轮。
+YOLO 模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认最多 3 轮。
 
 ## 5. 用 Codex 审查
 

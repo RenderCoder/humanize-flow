@@ -232,7 +232,7 @@ PY
   printf 'new review\n' > docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md
   CLAUDE_ARGS_CAPTURE="$TMP/claude-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
   grep -q -- '--model claude-sonnet-4-6' "$TMP/claude-args.txt"
-  grep -q -- '--permission-mode auto' "$TMP/claude-args.txt"
+  grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-args.txt"
   grep -q -- '--output-format stream-json' "$TMP/claude-args.txt"
   grep -q -- '--include-partial-messages' "$TMP/claude-args.txt"
   grep -q -- '--include-hook-events' "$TMP/claude-args.txt"
@@ -302,7 +302,7 @@ PY
   CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run imported-task --yolo --max-round 2 >/dev/null
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "2"
-  grep -q -- '--permission-mode auto' "$TMP/claude-yolo-args.txt"
+  grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-yolo-args.txt"
   grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-yolo-review-args.txt"
   grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/' "$TMP/claude-yolo-args.txt"
   grep -R 'YOLO second review passed' docs/humanize-flow/imported-task/reviews >/dev/null

@@ -112,7 +112,7 @@ humanize-flow run <bd-id> --humanize-mode auto
 humanize-flow run <bd-id> --no-humanize
 ```
 
-Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-sonnet-4-6`, permission mode `auto`, and `claude.humanize=required`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream.
+Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-sonnet-4-6`, permission mode `bypassPermissions`, and `claude.humanize=required`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream. Lower Claude permissions for one run with `--permission-mode auto`, for one command with `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto`, or globally with `humanize-flow config set claude.permission_mode auto`.
 
 Humanize modes are:
 
@@ -122,7 +122,7 @@ Humanize modes are:
 
 Override one run with `--humanize`, `--humanize-mode required|auto|off`, or `--no-humanize`. Set the global default with `humanize-flow config set claude.humanize <mode>` or override one command with `HUMANIZE_FLOW_CLAUDE_HUMANIZE`.
 
-`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. Each round forces Claude Code permission mode `auto`, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds.
+`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. Each round forces Claude Code permission mode `bypassPermissions`, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds.
 
 Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 
@@ -146,7 +146,7 @@ humanize-flow config get language
 humanize-flow config set language zh
 humanize-flow config get claude.model
 humanize-flow config set claude.model claude-sonnet-4-6
-humanize-flow config set claude.permission_mode auto
+humanize-flow config set claude.permission_mode bypassPermissions
 humanize-flow config get claude.humanize
 humanize-flow config set claude.humanize required
 humanize-flow config get codex.model

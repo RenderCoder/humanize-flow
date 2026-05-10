@@ -2,10 +2,10 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.1"
+HF_VERSION="0.5.2"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
-HF_DEFAULT_CLAUDE_PERMISSION_MODE="auto"
+HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
 HF_DEFAULT_CLAUDE_HUMANIZE="required"
 HF_DEFAULT_LANGUAGE="en"
 HF_DEFAULT_CODEX_MODEL=""
@@ -226,7 +226,10 @@ claude_model_default() {
 }
 
 claude_permission_mode_default() {
-  config_get "claude.permission_mode" "$HF_DEFAULT_CLAUDE_PERMISSION_MODE" "HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE"
+  local raw normalized
+  raw="$(config_get "claude.permission_mode" "$HF_DEFAULT_CLAUDE_PERMISSION_MODE" "HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE")"
+  normalized="$(normalize_claude_permission_mode "$raw")" || die "Unsupported Claude permission mode: $raw (supported: acceptEdits, auto, bypassPermissions, default, dontAsk, plan)"
+  printf '%s\n' "$normalized"
 }
 
 claude_humanize_default() {
@@ -278,6 +281,13 @@ normalize_humanize_mode() {
     required|require|must|true|TRUE|True|1|yes|YES|Yes|on|ON|On) printf 'required\n' ;;
     auto|optional|prefer|preferred) printf 'auto\n' ;;
     off|none|disable|disabled|false|FALSE|False|0|no|NO|No) printf 'off\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_claude_permission_mode() {
+  case "$1" in
+    acceptEdits|auto|bypassPermissions|default|dontAsk|plan) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -554,7 +564,11 @@ EOF
           normalized="$(normalize_humanize_mode "$value")" || die "Unsupported Claude humanize mode: $value (supported: required, auto, off)"
           value="$normalized"
           ;;
-        claude.model|claude.permission_mode|codex.model) ;;
+        claude.permission_mode)
+          normalized="$(normalize_claude_permission_mode "$value")" || die "Unsupported Claude permission mode: $value (supported: acceptEdits, auto, bypassPermissions, default, dontAsk, plan)"
+          value="$normalized"
+          ;;
+        claude.model|codex.model) ;;
         *) die "Unsupported config key: $key" ;;
       esac
       json_set "$file" "$key" "$value"
@@ -568,7 +582,7 @@ Usage:
   humanize-flow config set language zh
   humanize-flow config get claude.model
   humanize-flow config set claude.model claude-sonnet-4-6
-  humanize-flow config set claude.permission_mode auto
+  humanize-flow config set claude.permission_mode bypassPermissions
   humanize-flow config get claude.humanize
   humanize-flow config set claude.humanize required
   humanize-flow config get codex.model
@@ -1605,7 +1619,7 @@ cmd_run_yolo() {
   round=1
   while [ "$round" -le "$max_round" ]; do
     info "YOLO round $round/$max_round: Claude Code worker"
-    cmd_run_once "$bd_id" "print" "$model" "auto" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
+    cmd_run_once "$bd_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
     info "YOLO round $round/$max_round: Codex review"
     cmd_review "$bd_id" --yolo
     latest_review="$(latest_review_for_slug "$slug" 2>/dev/null || true)"
@@ -1648,7 +1662,7 @@ cmd_run() {
       --humanize) humanize_mode="required" ;;
       --no-humanize) humanize_mode="off" ;;
       --humanize-mode) shift; humanize_mode="${1:-}" ;;
-      --yolo) yolo=1; permission_mode="auto" ;;
+      --yolo) yolo=1; permission_mode="bypassPermissions" ;;
       --max-round) shift; max_round="${1:-}" ;;
       --text) output_format="text"; partial=0; hook_events=0 ;;
       --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
