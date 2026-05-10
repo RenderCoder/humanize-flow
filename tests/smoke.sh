@@ -39,6 +39,34 @@ case "${1:-}" in
 JSON
     ;;
   ready)
+    if [ -n "${BD_READY_DYNAMIC_STATE:-}" ]; then
+      if grep -qx 'bd-epic.2' "$BD_READY_DYNAMIC_STATE" 2>/dev/null; then
+        cat <<'JSON'
+[
+  {
+    "id": "bd-epic.1",
+    "title": "First task",
+    "labels": ["humanize-flow", "epic-yolo"],
+    "priority": 2,
+    "type": "task"
+  }
+]
+JSON
+      else
+        cat <<'JSON'
+[
+  {
+    "id": "bd-epic.2",
+    "title": "Second task",
+    "labels": ["humanize-flow", "epic-yolo"],
+    "priority": 2,
+    "type": "task"
+  }
+]
+JSON
+      fi
+      exit 0
+    fi
     cat <<'JSON'
 [
   {
@@ -57,6 +85,17 @@ JSON
   }
 ]
 JSON
+    ;;
+  close)
+    shift
+    id="${1:-}"
+    if [ -n "${BD_READY_DYNAMIC_STATE:-}" ] && [ -n "$id" ]; then
+      printf '%s\n' "$id" >> "$BD_READY_DYNAMIC_STATE"
+    fi
+    if [ -n "${BD_CLOSE_ARGS_CAPTURE:-}" ]; then
+      printf '%s\n' "$id" >> "$BD_CLOSE_ARGS_CAPTURE"
+    fi
+    printf '{"id":"%s","status":"closed"}\n' "$id"
     ;;
   create)
     printf '%s\n' "$@" > "$BD_CREATE_ARGS_CAPTURE"
@@ -110,13 +149,13 @@ case "$*" in
       if [ -f "$CODEX_REVIEW_COUNT" ]; then count="$(cat "$CODEX_REVIEW_COUNT")"; fi
       count=$((count + 1))
       printf '%s\n' "$count" > "$CODEX_REVIEW_COUNT"
-      if [ "$count" -eq 1 ]; then
+      if [ $((count % 2)) -eq 1 ]; then
         printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nYOLO first review requested changes.\n'
       else
         printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO second review passed.\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
       fi
     else
-      printf 'fake review\n'
+      printf '# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
     fi
     ;;
   *"drafting a professional GitHub pull request"*)
@@ -228,8 +267,9 @@ PY
   grep -q '需求' "$TMP/bd-materialize-args.txt"
   grep -q 'Beads 计划' "$TMP/bd-materialize-args.txt"
   mkdir -p docs/humanize-flow/imported-task/reviews
-  printf 'old review\n' > docs/humanize-flow/imported-task/reviews/20260507-000000-bd-1234.md
-  printf 'new review\n' > docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md
+  printf 'old review without verdict\n' > docs/humanize-flow/imported-task/reviews/20260507-000000-bd-1234.md
+  : > docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md
+  printf '# Review\n\n## Verdict\n\n`changes_requested`\n\nnew review\n' > docs/humanize-flow/imported-task/reviews/20260509-000000-bd-1234.md
   CLAUDE_ARGS_CAPTURE="$TMP/claude-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
   grep -q -- '--model claude-sonnet-4-6' "$TMP/claude-args.txt"
   grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-args.txt"
@@ -240,7 +280,7 @@ PY
   grep -q 'Claude humanize mode: required' "$TMP/claude-args.txt"
   grep -q 'Required humanize behavior:' "$TMP/claude-args.txt"
   grep -q '/humanize:start-rlcr-loop docs/humanize-flow/imported-task/plan.md --yolo' "$TMP/claude-args.txt"
-  grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/20260508-000000-bd-1234.md' "$TMP/claude-args.txt"
+  grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/20260509-000000-bd-1234.md' "$TMP/claude-args.txt"
   grep -q 'Do not bulk-load docs/humanize-flow/imported-task/reviews/' "$TMP/claude-args.txt"
   CLAUDE_ARGS_CAPTURE="$TMP/claude-no-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >/dev/null
   grep -q 'Claude humanize mode: off' "$TMP/claude-no-humanize-args.txt"
@@ -260,6 +300,11 @@ PY
   ! grep -q -- '--sandbox danger-full-access' "$TMP/codex-review-args.txt"
   grep -q 'Task id: bd-1234' "$TMP/codex-review-args.txt"
   grep -q 'Handoff slug: imported-task' "$TMP/codex-review-args.txt"
+  grep -q 'Review the full approved handoff scope for `imported-task`' "$TMP/codex-review-args.txt"
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-task-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review bd-1234 >/dev/null
+  grep -q 'Task id: bd-1234' "$TMP/codex-review-task-args.txt"
+  grep -q 'Review only Beads task `bd-1234` within handoff `imported-task`' "$TMP/codex-review-task-args.txt"
+  grep -q 'Do not require sibling tasks from the same Epic/handoff to be complete' "$TMP/codex-review-task-args.txt"
   CODEX_ARGS_CAPTURE="$TMP/codex-review-sandbox-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task --sandbox workspace-write >/dev/null
   grep -q -- '--sandbox workspace-write' "$TMP/codex-review-sandbox-args.txt"
   ! grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-sandbox-args.txt"
@@ -303,9 +348,53 @@ PY
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "2"
   grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-yolo-args.txt"
+  grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-args.txt"
   grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-yolo-review-args.txt"
   grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/' "$TMP/claude-yolo-args.txt"
   grep -R 'YOLO second review passed' docs/humanize-flow/imported-task/reviews >/dev/null
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-required-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-required-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --yolo --humanize-mode required --max-round 2 >/dev/null
+  grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-required-args.txt"
+  ! grep -q 'Claude humanize mode: required' "$TMP/claude-yolo-required-args.txt"
+  python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('.humanize-flow/handoffs/epic-yolo.json')
+data = {
+    'schema_version': '1',
+    'slug': 'epic-yolo',
+    'state': 'approved',
+    'approval': {'status': 'approved'},
+    'artifacts': {
+        'plan': 'docs/humanize-flow/epic-yolo/plan.md',
+        'acceptance': 'docs/humanize-flow/epic-yolo/acceptance.md',
+    },
+    'bd': {
+        'materialized': True,
+        'epic': {'bd_id': 'bd-epic', 'title': 'Epic YOLO'},
+        'tasks': [
+            {'key': 'T1', 'bd_id': 'bd-epic.1', 'title': 'First task'},
+            {'key': 'T2', 'bd_id': 'bd-epic.2', 'title': 'Second task'},
+        ],
+    },
+}
+path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+  mkdir -p docs/humanize-flow/epic-yolo
+  printf '# Plan\n' > docs/humanize-flow/epic-yolo/plan.md
+  printf '# Acceptance\n' > docs/humanize-flow/epic-yolo/acceptance.md
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
+  : > "$TMP/bd-ready-dynamic-state.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo.stdout"
+  test "$(cat "$TMP/yolo-claude-count.txt")" = "4"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "4"
+  grep -q 'Epic scheduling: dynamic via bd ready --json' "$TMP/epic-yolo.stdout"
+  grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-args.txt"
+  grep -q 'Review only Beads task `bd-epic.1` within handoff `epic-yolo`' "$TMP/codex-epic-yolo-review-args.txt"
+  grep -qx 'bd-epic.1' "$TMP/bd-close-args.txt"
+  grep -qx 'bd-epic.2' "$TMP/bd-close-args.txt"
+  test "$(sed -n '1p' "$TMP/bd-close-args.txt")" = "bd-epic.2"
+  test "$(sed -n '2p' "$TMP/bd-close-args.txt")" = "bd-epic.1"
   git checkout -qb feature/pr-smoke
   printf 'pr\n' > pr-change.txt
   git add pr-change.txt

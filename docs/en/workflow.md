@@ -116,7 +116,7 @@ humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 ```
 
-YOLO mode forces Claude Code permission mode `bypassPermissions`, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds.
+YOLO mode forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested review loops, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds per target task. If you pass a handoff slug or Beads Epic ID, YOLO re-queries `bd ready --json` before each child task, chooses the next ready child that belongs to the handoff in Beads' ready order, closes each child after a passing review so dependencies can unblock, and scopes each Codex review to the completed child task, not the whole Epic. The handoff limits scope but does not impose a static child-task order.
 
 ## 5. Review with Codex
 

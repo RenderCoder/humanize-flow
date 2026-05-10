@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.2"
+HF_VERSION="0.5.3"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -1378,12 +1378,252 @@ raise SystemExit(1)
 PY
 }
 
-latest_review_for_slug() {
-  local slug review_dir
+bd_id_for_ref_and_slug() {
+  local ref slug
+  ref="$1"; slug="$2"
+  if [ -n "$slug" ] && [ "$ref" = "$slug" ]; then
+    default_bd_id_for_slug "$slug"
+  else
+    printf '%s\n' "$ref"
+  fi
+}
+
+review_scope_instruction() {
+  local ref slug bd_id file
+  ref="$1"; slug="$2"; bd_id="$3"
+  if [ -z "$slug" ]; then
+    cat <<EOF
+Review scope:
+- Review only the requested Beads task id: $bd_id.
+- Do not fail this review for unrelated tasks or unrelated repository changes unless they directly break this task.
+EOF
+    return
+  fi
+  file="$(handoff_path "$slug")"
+  python3 - "$file" "$ref" "$slug" "$bd_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+ref = sys.argv[2]
+slug = sys.argv[3]
+bd_id = sys.argv[4]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    data = {}
+bd = data.get('bd') or {}
+epic = bd.get('epic') or {}
+epic_id = epic.get('bd_id') if isinstance(epic, dict) else None
+task_ids = [
+    task.get('bd_id')
+    for task in (bd.get('tasks') or [])
+    if isinstance(task, dict) and task.get('bd_id')
+]
+is_epic_scope = ref in {slug, data.get('slug'), path.stem} or (epic_id and ref == epic_id)
+if task_ids and bd_id in task_ids and not is_epic_scope:
+    print("Review scope:")
+    print(f"- Review only Beads task `{bd_id}` within handoff `{slug}`.")
+    print("- Do not require sibling tasks from the same Epic/handoff to be complete.")
+    print("- Do not fail this review because the overall Epic is incomplete; fail only for gaps, regressions, tests, or acceptance criteria that belong to this task or directly block this task.")
+    print("- You may read the full handoff and plan for context, but verdict must be scoped to this task.")
+else:
+    print("Review scope:")
+    print(f"- Review the full approved handoff scope for `{slug}`.")
+    print("- If this is an Epic-level review, all child tasks and handoff acceptance criteria must be complete before pass.")
+PY
+}
+
+yolo_target_ids_for_ref() {
+  local ref slug
+  ref="$1"; slug="$2"
+  python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+ref = sys.argv[2]
+slug = sys.argv[3]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+bd = data.get('bd') or {}
+epic = bd.get('epic') or {}
+epic_id = epic.get('bd_id') if isinstance(epic, dict) else None
+tasks = [
+    task.get('bd_id')
+    for task in (bd.get('tasks') or [])
+    if isinstance(task, dict) and task.get('bd_id')
+]
+
+is_slug_ref = ref in {slug, data.get('slug'), path.stem}
+if tasks and (is_slug_ref or (epic_id and ref == epic_id)):
+    for task_id in tasks:
+        print(task_id)
+    raise SystemExit(0)
+
+if ref:
+    print(ref)
+    raise SystemExit(0)
+
+if epic_id:
+    print(epic_id)
+    raise SystemExit(0)
+for task_id in tasks:
+    print(task_id)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+handoff_child_task_ids() {
+  local slug
   slug="$1"
+  python3 - "$(handoff_path "$slug")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+for task in (data.get('bd') or {}).get('tasks') or []:
+    if isinstance(task, dict) and task.get('bd_id'):
+        print(task['bd_id'])
+PY
+}
+
+yolo_ref_is_epic_scope() {
+  local ref slug
+  ref="$1"; slug="$2"
+  python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+ref = sys.argv[2]
+slug = sys.argv[3]
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+epic = (data.get('bd') or {}).get('epic') or {}
+epic_id = epic.get('bd_id') if isinstance(epic, dict) else None
+if ref in {slug, data.get('slug'), path.stem} or (epic_id and ref == epic_id):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+yolo_ready_child_task_ids() {
+  local slug completed_csv tmp
+  slug="$1"; completed_csv="${2:-}"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can query ready child tasks dynamically."
+  tmp="$(state_dir)/tmp/bd-ready-yolo-$(timestamp).json"
+  mkdir -p "$(dirname "$tmp")"
+  bd ready --json > "$tmp"
+  python3 - "$(handoff_path "$slug")" "$tmp" "$completed_csv" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+handoff_path = Path(sys.argv[1])
+ready_path = Path(sys.argv[2])
+completed = {item for item in sys.argv[3].split(',') if item}
+try:
+    handoff = json.loads(handoff_path.read_text(encoding='utf-8'))
+    ready_data = json.loads(ready_path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+ordered = [
+    task.get('bd_id')
+    for task in (handoff.get('bd') or {}).get('tasks') or []
+    if isinstance(task, dict) and task.get('bd_id')
+]
+remaining = {task_id for task_id in ordered if task_id not in completed}
+
+if isinstance(ready_data, dict):
+    items = ready_data.get('issues') or ready_data.get('items') or ready_data.get('data') or ready_data.get('ready') or []
+elif isinstance(ready_data, list):
+    items = ready_data
+else:
+    items = []
+
+def item_id(item):
+    if not isinstance(item, dict):
+        return None
+    for key in ('id', 'issue_id', 'bead_id'):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+seen = set()
+for item in items:
+    task_id = item_id(item)
+    if task_id in remaining and task_id not in seen:
+        seen.add(task_id)
+        print(task_id)
+PY
+}
+
+yolo_mark_child_complete() {
+  local task_id review_path reason
+  task_id="$1"; review_path="$2"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can advance completed child tasks."
+  reason="Humanize Flow YOLO review passed"
+  if [ -n "$review_path" ]; then
+    reason="$reason: $(repo_relative_path "$review_path")"
+  fi
+  if ! bd close "$task_id" --reason "$reason" >/dev/null; then
+    die "YOLO Epic mode could not close completed Beads task: $task_id"
+  fi
+}
+
+latest_review_for_slug() {
+  local slug ref review_dir
+  slug="$1"; ref="${2:-}"
   review_dir="$(docs_dir)/$slug/reviews"
   [ -d "$review_dir" ] || return 1
-  find "$review_dir" -maxdepth 1 -type f -name '*.md' -print | sort | tail -n 1
+  python3 - "$review_dir" "$ref" <<'PY'
+import sys
+from pathlib import Path
+import re
+
+review_dir = Path(sys.argv[1])
+ref = sys.argv[2]
+paths = []
+patterns = [
+    re.compile(r'^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b', re.I | re.M),
+    re.compile(r'^\s*`(pass|changes_requested|blocked)`\s*$', re.I | re.M),
+    re.compile(r'^\s*(pass|changes_requested|blocked)\s*$', re.I | re.M),
+]
+for path in sorted(review_dir.glob('*.md')):
+    try:
+        if path.stat().st_size <= 0:
+            continue
+        text = path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        continue
+    if not any(pattern.search(text) for pattern in patterns):
+        continue
+    if ref:
+        name = path.name
+        if not (name.endswith(f'-{ref}.md') or name.endswith(f'-{ref}-human-feedback.md')):
+            continue
+    paths.append(path)
+if not paths:
+    raise SystemExit(1)
+print(paths[-1])
+PY
 }
 
 review_verdict() {
@@ -1479,12 +1719,10 @@ cmd_run_once() {
   command_exists claude || die "claude CLI not found."
   command_exists bd || warn "bd CLI not found; worker prompt will still reference task id."
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
-  if [ -n "$slug" ]; then
-    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
-  fi
+  if [ -n "$slug" ]; then bd_id="$(bd_id_for_ref_and_slug "$ref" "$slug" 2>/dev/null || true)"; fi
   if [ -z "$bd_id" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
-  if [ -n "$slug" ]; then latest_review="$(latest_review_for_slug "$slug" 2>/dev/null || true)"; else latest_review=""; fi
+  if [ -n "$slug" ]; then latest_review="$(latest_review_for_slug "$slug" "$bd_id" 2>/dev/null || true)"; else latest_review=""; fi
   if [ -n "$latest_review" ]; then latest_review_display="$(repo_relative_path "$latest_review")"; else latest_review_display=""; fi
   if [ -n "$slug" ]; then plan_path="$(handoff_artifact_path "$slug" "plan" 2>/dev/null || true)"; else plan_path=""; fi
   if [ -n "$plan_path" ]; then plan_display="$(repo_relative_path "$plan_path")"; else plan_display="not-found"; fi
@@ -1598,7 +1836,9 @@ EOF
 
 cmd_run_yolo() {
   require_git_repo
-  local ref max_round model output_format verbose partial hook_events humanize_mode slug bd_id round latest_review verdict
+  local ref max_round model output_format verbose partial hook_events humanize_mode slug
+  local epic_scope child_ids target_ids target_count completed_csv completed_count
+  local target_index target_id ready_ids round latest_review verdict
   ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
   case "$max_round" in
@@ -1608,44 +1848,112 @@ cmd_run_yolo() {
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
   [ -n "$slug" ] || die "YOLO mode requires an approved Humanize Flow handoff for: $ref"
   ensure_approved_handoff_for_slug "$slug"
-  bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
-  [ -n "$bd_id" ] || bd_id="$ref"
+  epic_scope=0
+  if yolo_ref_is_epic_scope "$ref" "$slug"; then epic_scope=1; fi
+  if [ "$epic_scope" -eq 1 ]; then
+    child_ids="$(handoff_child_task_ids "$slug" 2>/dev/null || true)"
+    [ -n "$child_ids" ] || die "YOLO Epic mode could not find materialized child Beads tasks in handoff: $slug"
+    target_count="$(printf '%s\n' "$child_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  else
+    target_ids="$(yolo_target_ids_for_ref "$ref" "$slug" 2>/dev/null || true)"
+    [ -n "$target_ids" ] || die "YOLO mode could not resolve Beads task target(s) for: $ref"
+    target_count="$(printf '%s\n' "$target_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  fi
 
   info "starting YOLO mode"
   info "handoff slug: $slug"
-  info "task id: $bd_id"
+  if [ "$epic_scope" -eq 1 ]; then
+    info "Epic scheduling: dynamic via bd ready --json"
+    info "child task count: $target_count"
+  else
+    info "target count: $target_count"
+  fi
   info "max rounds: $max_round"
-  info "humanize mode: $humanize_mode"
-  round=1
-  while [ "$round" -le "$max_round" ]; do
-    info "YOLO round $round/$max_round: Claude Code worker"
-    cmd_run_once "$bd_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
-    info "YOLO round $round/$max_round: Codex review"
-    cmd_review "$bd_id" --yolo
-    latest_review="$(latest_review_for_slug "$slug" 2>/dev/null || true)"
-    [ -n "$latest_review" ] || die "YOLO review did not produce a review artifact for $slug"
-    verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
-    info "YOLO review verdict: ${verdict:-unknown}"
-    case "$verdict" in
-      pass)
-        info "YOLO mode completed after $round round(s): review passed."
-        return 0
-        ;;
-      changes_requested|blocked|"")
-        if [ "$round" -ge "$max_round" ]; then
-          die "YOLO mode reached max rounds ($max_round) without a passing review. Latest review: $latest_review"
-        fi
-        info "YOLO mode will run another correction round using latest review: $(repo_relative_path "$latest_review")"
-        ;;
-      *)
-        if [ "$round" -ge "$max_round" ]; then
-          die "YOLO mode could not parse a passing review before max rounds. Latest verdict: $verdict. Latest review: $latest_review"
-        fi
-        warn "Unrecognized review verdict '$verdict'; continuing correction loop."
-        ;;
-    esac
-    round=$((round + 1))
+  info "humanize mode: off (forced by --yolo to avoid nested review loops)"
+  completed_csv=""
+  completed_count=0
+  if [ "$epic_scope" -eq 1 ]; then
+    while [ "$completed_count" -lt "$target_count" ]; do
+      if ! ready_ids="$(yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
+        die "YOLO Epic mode failed while querying ready child tasks for handoff: $slug"
+      fi
+      target_id="$(printf '%s\n' "$ready_ids" | sed '/^$/d' | head -n 1)"
+      if [ -z "$target_id" ]; then
+        die "YOLO Epic mode found no ready remaining child tasks for $slug. Completed $completed_count/$target_count. Check Beads dependency/status state with: bd ready --json"
+      fi
+      target_index=$((completed_count + 1))
+      info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
+      round=1
+      while [ "$round" -le "$max_round" ]; do
+        info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
+        cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off"
+        info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
+        cmd_review "$target_id" --yolo
+        latest_review="$(latest_review_for_slug "$slug" "$target_id" 2>/dev/null || true)"
+        [ -n "$latest_review" ] || die "YOLO review did not produce a non-empty review artifact for $target_id"
+        verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
+        [ -n "$verdict" ] || die "YOLO review did not produce a parseable verdict for $target_id. Latest review: $latest_review"
+        info "YOLO review verdict for $target_id: $verdict"
+        case "$verdict" in
+          pass)
+            info "YOLO target $target_id completed after $round round(s): review passed."
+            yolo_mark_child_complete "$target_id" "$latest_review"
+            info "YOLO marked Beads task complete: $target_id"
+            break
+            ;;
+          changes_requested|blocked)
+            if [ "$round" -ge "$max_round" ]; then
+              die "YOLO mode reached max rounds ($max_round) for $target_id without a passing review. Latest review: $latest_review"
+            fi
+            info "YOLO mode will run another correction round for $target_id using latest review: $(repo_relative_path "$latest_review")"
+            ;;
+          *)
+            die "YOLO mode could not parse a supported verdict for $target_id. Latest verdict: $verdict. Latest review: $latest_review"
+            ;;
+        esac
+        round=$((round + 1))
+      done
+      completed_csv="${completed_csv:+$completed_csv,}$target_id"
+      completed_count=$((completed_count + 1))
+    done
+    info "YOLO mode completed all target(s)."
+    return 0
+  fi
+
+  target_index=1
+  printf '%s\n' "$target_ids" | sed '/^$/d' | while IFS= read -r target_id; do
+    info "YOLO target $target_index/$target_count: $target_id"
+    round=1
+    while [ "$round" -le "$max_round" ]; do
+      info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
+      cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off"
+      info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
+      cmd_review "$target_id" --yolo
+      latest_review="$(latest_review_for_slug "$slug" "$target_id" 2>/dev/null || true)"
+      [ -n "$latest_review" ] || die "YOLO review did not produce a non-empty review artifact for $target_id"
+      verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
+      [ -n "$verdict" ] || die "YOLO review did not produce a parseable verdict for $target_id. Latest review: $latest_review"
+      info "YOLO review verdict for $target_id: $verdict"
+      case "$verdict" in
+        pass)
+          info "YOLO target $target_id completed after $round round(s): review passed."
+          break
+          ;;
+        changes_requested|blocked)
+          if [ "$round" -ge "$max_round" ]; then
+            die "YOLO mode reached max rounds ($max_round) for $target_id without a passing review. Latest review: $latest_review"
+          fi
+          info "YOLO mode will run another correction round for $target_id using latest review: $(repo_relative_path "$latest_review")"
+          ;;
+        *)
+          die "YOLO mode could not parse a supported verdict for $target_id. Latest verdict: $verdict. Latest review: $latest_review"
+          ;;
+      esac
+      round=$((round + 1))
+    done
+    target_index=$((target_index + 1))
   done
+  info "YOLO mode completed all target(s)."
 }
 
 cmd_run() {
@@ -1662,7 +1970,7 @@ cmd_run() {
       --humanize) humanize_mode="required" ;;
       --no-humanize) humanize_mode="off" ;;
       --humanize-mode) shift; humanize_mode="${1:-}" ;;
-      --yolo) yolo=1; permission_mode="bypassPermissions" ;;
+      --yolo) yolo=1; permission_mode="bypassPermissions"; humanize_mode="off" ;;
       --max-round) shift; max_round="${1:-}" ;;
       --text) output_format="text"; partial=0; hook_events=0 ;;
       --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
@@ -1683,7 +1991,7 @@ Options:
   --humanize                 Require humanize/RLCR for this run.
   --no-humanize              Disable humanize/RLCR for this run.
   --humanize-mode MODE       Set humanize mode: required, auto, or off.
-  --yolo                     Run Claude+Codex review loop until pass or max rounds.
+  --yolo                     Run Claude+Codex review loop until pass or max rounds. Forces --humanize-mode off.
   --max-round N              Maximum YOLO correction rounds. Default: 3.
   --text                     Use Claude text output instead of detailed stream-json.
   --stream-json              Use detailed stream-json internally and show a human-readable progress log. This is the default.
@@ -1925,9 +2233,7 @@ EOF
   [ -n "$ref" ] || die "Usage: humanize-flow review BD_ID_OR_SLUG [--yolo|--no-yolo] [--sandbox MODE]"
   command_exists codex || die "codex CLI not found."
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
-  if [ -n "$slug" ]; then
-    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
-  fi
+  if [ -n "$slug" ]; then bd_id="$(bd_id_for_ref_and_slug "$ref" "$slug" 2>/dev/null || true)"; fi
   if [ -z "${bd_id:-}" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
   run_dir="$(state_dir)/runs/$(timestamp)-review-$ref"
@@ -1953,6 +2259,7 @@ $(language_instruction)
 
 Follow the humanize-flow-reviewer skill exactly:
 - Inspect the Beads task, handoff, plan, acceptance criteria, git status, and diff.
+$(review_scope_instruction "$ref" "$slug" "$bd_id")
 - Treat a missing approved handoff, plan, or acceptance criteria as a blocked review, not a pass.
 - Do not implement fixes.
 - Produce a review in Markdown using verdict: pass, changes_requested, or blocked.
@@ -1975,6 +2282,10 @@ EOF
   else
     run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$review_file"
   fi
+  if [ ! -s "$review_file" ]; then
+    die "review command produced an empty review artifact: $review_file"
+  fi
+  review_verdict "$review_file" >/dev/null 2>&1 || die "review command did not produce a parseable verdict in: $review_file"
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_review" "$review_file"
   fi
@@ -2034,13 +2345,11 @@ EOF
   command_exists codex || die "codex CLI not found."
 
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
-  if [ -n "$slug" ]; then
-    bd_id="$(default_bd_id_for_slug "$slug" 2>/dev/null || true)"
-  fi
+  if [ -n "$slug" ]; then bd_id="$(bd_id_for_ref_and_slug "$ref" "$slug" 2>/dev/null || true)"; fi
   if [ -z "${bd_id:-}" ]; then bd_id="$ref"; fi
   if [ -n "$slug" ]; then file="$(handoff_path "$slug")"; else file=""; fi
   if [ -z "$review_file" ] && [ -n "$slug" ]; then
-    review_file="$(latest_review_for_slug "$slug" 2>/dev/null || true)"
+    review_file="$(latest_review_for_slug "$slug" "$bd_id" 2>/dev/null || true)"
   fi
   [ -n "$review_file" ] || die "No prior review found. Pass --review FILE or run humanize-flow review first."
   [ -f "$review_file" ] || die "review file not found: $review_file"
@@ -2112,6 +2421,7 @@ $(language_instruction)
 
 Follow the humanize-flow-reviewer skill and these additional rules:
 - Read the Beads task, handoff, plan, acceptance criteria, git status, diff, prior review, and human feedback.
+$(review_scope_instruction "$ref" "$slug" "$bd_id")
 - Treat human feedback as additional evidence or scope correction, not as an automatic override.
 - Reconcile disagreements explicitly: state whether the feedback changes the review scope, invalidates a prior finding, adds a new finding, or supplies missing verification evidence.
 - Re-evaluate the final verdict: pass, changes_requested, or blocked.
@@ -2136,6 +2446,10 @@ EOF
   else
     run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$output_file"
   fi
+  if [ ! -s "$output_file" ]; then
+    die "review-feedback command produced an empty review artifact: $output_file"
+  fi
+  review_verdict "$output_file" >/dev/null 2>&1 || die "review-feedback command did not produce a parseable verdict in: $output_file"
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_review" "$output_file"
     set_handoff_artifact "$slug" "latest_human_feedback" "$feedback_file"

@@ -122,7 +122,9 @@ Humanize modes are:
 
 Override one run with `--humanize`, `--humanize-mode required|auto|off`, or `--no-humanize`. Set the global default with `humanize-flow config set claude.humanize <mode>` or override one command with `HUMANIZE_FLOW_CLAUDE_HUMANIZE`.
 
-`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. Each round forces Claude Code permission mode `bypassPermissions`, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds.
+`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. It forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested humanize/RLCR review loops, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds per target task.
+
+When the target is a handoff slug or Beads Epic ID, YOLO treats the handoff as an Epic queue. Before each child task it re-queries `bd ready --json`, intersects the ready set with the remaining handoff children, and selects the next ready child in Beads' ready order. The handoff limits the allowed child set; it does not impose a static execution order. Non-ready children are skipped until Beads dependencies unblock them. After a child task passes review, the CLI closes that Beads task with a reason pointing at the passing review artifact so downstream dependencies can become ready. Each child task receives its own Claude correction loop and Codex review. The generated review prompt scopes Codex to the current child task, so unfinished sibling tasks in the same Epic are not valid failure reasons for that child-task review. Run a final explicit `humanize-flow review <epic-id-or-slug>` when you want full-Epic acceptance.
 
 Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 

@@ -122,7 +122,9 @@ humanize 模式包括：
 
 单次运行可用 `--humanize`、`--humanize-mode required|auto|off` 或 `--no-humanize` 覆盖。全局默认值可用 `humanize-flow config set claude.humanize <mode>` 设置，单条命令也可用 `HUMANIZE_FLOW_CLAUDE_HUMANIZE` 覆盖。
 
-`--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。每一轮都会强制 Claude Code 权限模式为 `bypassPermissions`，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认最多 3 轮。
+`--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。它会强制 Claude Code 权限模式为 `bypassPermissions`，强制 `--humanize-mode off` 以避免嵌套 humanize/RLCR review 循环，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认每个目标任务最多 3 轮。
+
+当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会把 handoff 当作 Epic 队列处理。每个子任务开始前，它都会重新查询 `bd ready --json`，把 ready 集合和 handoff 中剩余子任务求交集，并按 Beads ready 顺序选择下一个 ready 子任务。handoff 只限制允许执行的子任务集合，不施加静态执行顺序；尚未 ready 的子任务会等 Beads 依赖解锁后再执行。子任务 review 通过后，CLI 会关闭该 Beads 任务，并在 reason 中记录通过的 review artifact 路径，让下游依赖可以变为 ready。每个子任务都有自己的 Claude 修正循环和 Codex review。生成的 review prompt 会把 Codex 约束在当前子任务范围内，因此同一个 Epic 下尚未完成的兄弟任务不能作为当前子任务 review 失败的理由。需要完整 Epic 验收时，再显式运行 `humanize-flow review <epic-id-or-slug>`。
 
 使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 

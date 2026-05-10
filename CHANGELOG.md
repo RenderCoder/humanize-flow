@@ -4,6 +4,18 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.5.3] - 2026-05-10
+
+### Changed
+
+- Make `humanize-flow run --yolo` treat handoff slug and Beads Epic targets as dynamic Beads queues: each child run re-queries `bd ready --json`, selects the next ready handoff child in Beads ready order, closes passing child tasks to unblock dependencies, and scopes Codex review to the completed child task instead of the full Epic.
+
+### Fixed
+
+- Preserve explicit child Beads IDs when resolving handoff-backed `run`, `review`, and `review-feedback` targets so child reviews do not fall back to the Epic/default task.
+- Ignore empty or verdict-less review artifacts when selecting the latest review, and fail review commands that produce no parseable verdict.
+- Remove an invalid YOLO-only guard from single-task `run` execution.
+
 ## [0.5.2] - 2026-05-10
 
 ### Changed

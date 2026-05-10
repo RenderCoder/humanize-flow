@@ -89,7 +89,7 @@ Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的
 humanize-flow run <bd-id> --interactive
 ```
 
-对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。可用 `--max-round N` 覆盖上限。
+对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环。当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会在每个子任务前重新查询 `bd ready --json`，选择属于该 handoff 的下一个 ready 子任务，保留 Beads 的 ready 排序，而不是使用 handoff 的静态子任务顺序。子任务 review 通过后，CLI 会关闭该 Beads 任务，让依赖关系解锁下一个 ready 任务。每次 Codex review 只审当前已完成的子任务，不能因为同一 Epic 下的兄弟任务尚未完成而判失败。可用 `--max-round N` 覆盖每个子任务的修正轮数上限。
 
 Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，并要求 WHY/context 优先于 HOW/WHAT；它会把通过 review 中的 `Human verification guide` 纳入 PR，作为 reviewer 可参考的验证上下文，把草稿保存在 `.humanize-flow/runs/`，在多个 remote 时让你选择 GitHub 仓库，然后用 `gh pr create --repo` 创建 PR。
 

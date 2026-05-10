@@ -116,7 +116,7 @@ humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 ```
 
-YOLO 模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认最多 3 轮。
+YOLO 模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 `--humanize-mode off` 以避免嵌套 review 循环，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认每个目标任务最多 3 轮。如果传入 handoff slug 或 Beads Epic ID，YOLO 会在每个子任务前重新查询 `bd ready --json`，按 Beads ready 顺序选择属于该 handoff 的下一个 ready 子任务；子任务 review 通过后会关闭该 Beads 任务，让依赖关系解锁；每次 Codex review 只审刚完成的子任务，而不是审整个 Epic。handoff 只限制范围，不施加静态子任务顺序。
 
 ## 5. 用 Codex 审查
 
