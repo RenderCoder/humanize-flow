@@ -45,7 +45,9 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: write the planner prompt but do not execute it.
 
-The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese. The language policy covers `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria.
+The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese. The language policy covers `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria.
+
+`jira-requirement.md` is a Jira-style Markdown requirement for internal collaboration systems. It should explain WHY/context before HOW/WHAT, use plain language for cross-functional readers, and separate technical notes when needed.
 
 ## `humanize-flow plan-from-bd`
 
@@ -77,7 +79,7 @@ Options:
 - `--sandbox <mode>`: pass sandbox mode to `codex exec`; default is `workspace-write`.
 - `--no-codex`: capture the task and write the planner prompt but do not execute it.
 
-The generated planner prompt applies the configured workflow language to generated planning prose, `bd-plan.md`, and handoff `bd.*` task prose while preserving source IDs and machine-readable literals. Raw source task text is preserved in `bd-source.json`.
+The generated planner prompt applies the configured workflow language to generated planning prose, `jira-requirement.md`, `bd-plan.md`, and handoff `bd.*` task prose while preserving source IDs and machine-readable literals. Raw source task text is preserved in `bd-source.json`.
 
 For this path, the next command is usually `humanize-flow approve <slug>` rather than `approve --materialize-bd`, because the Beads task already exists.
 
@@ -106,10 +108,12 @@ Run Claude Code worker for one Beads task.
 humanize-flow run <bd-id>
 humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
+humanize-flow run <bd-id> --yolo --retry 5 --retry-delay 20
 humanize-flow run <bd-id> --interactive
 humanize-flow run <bd-id> --model claude-sonnet-4-6
 humanize-flow run <bd-id> --humanize-mode auto
 humanize-flow run <bd-id> --no-humanize
+humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env
 ```
 
 Default worker runs use Claude Code print mode with `stream-json` internally, partial message chunks, hook events, `--verbose`, model `claude-sonnet-4-6`, permission mode `bypassPermissions`, and `claude.humanize=required`. The terminal shows a human-readable progress log. The run directory contains both `claude-final.md` for the readable log and `claude-final.jsonl` for the raw Claude event stream. Lower Claude permissions for one run with `--permission-mode auto`, for one command with `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto`, or globally with `humanize-flow config set claude.permission_mode auto`.
@@ -122,7 +126,13 @@ Humanize modes are:
 
 Override one run with `--humanize`, `--humanize-mode required|auto|off`, or `--no-humanize`. Set the global default with `humanize-flow config set claude.humanize <mode>` or override one command with `HUMANIZE_FLOW_CLAUDE_HUMANIZE`.
 
+Claude provider environment files are opt-in. By default, `run` uses the Claude Code process environment and Claude Code's normal global provider/auth configuration. Use `--env-file <file>` to load provider variables for one run, `HUMANIZE_FLOW_CLAUDE_ENV_FILE=<file>` for one shell command, or `humanize-flow config set claude.env_file <file>` for a persistent default. Use `--no-env-file` to ignore a configured file. Relative paths are resolved from the repository root. Keep these files untracked when they contain tokens.
+
 `--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. It forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested humanize/RLCR review loops, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds per target task.
+
+`--max-round` counts business correction rounds only: one Claude worker run plus one Codex review. Transient command failures are handled by `--retry` and `--retry-delay` instead. YOLO retries failed phases such as Claude provider calls, Codex review calls, `bd ready`, and Beads close operations before giving up. These retries do not consume a correction round. If retries are exhausted, the error includes a copyable `humanize-flow run ... --yolo` command so you can continue later after the network or provider recovers.
+
+YOLO automates implementation and Codex review only. It does not automatically complete the human verification gate. After a `pass` review, follow the review report's `Human verification guide`, then run `humanize-flow verify <bd-id>` before delivery commands such as `commit`, `push`, `pr`, or release.
 
 When the target is a handoff slug or Beads Epic ID, YOLO treats the handoff as an Epic queue. Before each child task it re-queries `bd ready --json`, intersects the ready set with the remaining handoff children, and selects the next ready child in Beads' ready order. The handoff limits the allowed child set; it does not impose a static execution order. Non-ready children are skipped until Beads dependencies unblock them. After a child task passes review, the CLI closes that Beads task with a reason pointing at the passing review artifact so downstream dependencies can become ready. Each child task receives its own Claude correction loop and Codex review. The generated review prompt scopes Codex to the current child task, so unfinished sibling tasks in the same Epic are not valid failure reasons for that child-task review. Run a final explicit `humanize-flow review <epic-id-or-slug>` when you want full-Epic acceptance.
 
@@ -151,6 +161,8 @@ humanize-flow config set claude.model claude-sonnet-4-6
 humanize-flow config set claude.permission_mode bypassPermissions
 humanize-flow config get claude.humanize
 humanize-flow config set claude.humanize required
+humanize-flow config get claude.env_file
+humanize-flow config set claude.env_file .humanize-flow/claude-provider.env
 humanize-flow config get codex.model
 humanize-flow config set codex.model gpt-5.5
 humanize-flow config get codex.reasoning_effort
@@ -175,7 +187,7 @@ humanize-flow i18n en
 humanize-flow i18n zh
 ```
 
-The default is `en`. Setting `zh` switches the full workflow to Simplified Chinese for planning docs including `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable literals remain canonical.
+The default is `en`. Setting `zh` switches the full workflow to Simplified Chinese for planning docs including `jira-requirement.md` and `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable literals remain canonical.
 
 ## `humanize-flow review`
 
@@ -193,6 +205,22 @@ Use the actual Beads task id when possible. Handoff slugs are also accepted and 
 Review defaults to yolo mode and passes Codex `--dangerously-bypass-approvals-and-sandbox` to avoid approval prompts blocking the review loop. Disable that default with `humanize-flow config set review.yolo false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, or a one-run `--no-yolo`. When yolo is disabled, change the sandbox with `humanize-flow config set review.sandbox <mode>` or `HUMANIZE_FLOW_REVIEW_SANDBOX`; override one run with `--sandbox <mode>`. Passing `--sandbox` also disables yolo for that run. Supported modes are `read-only`, `workspace-write`, and `danger-full-access`.
 
 When the verdict is `pass`, the review report includes a human verification guide with manual test steps and a checklist to complete before commit/push. When the verdict is `changes_requested` or `blocked`, the report includes human correction options that can be fed into `review-feedback`.
+
+## `humanize-flow verify`
+
+Record that a human completed the manual verification gate for a task or handoff.
+
+```bash
+humanize-flow verify <bd-id>
+humanize-flow verify <handoff-slug>
+humanize-flow verify <bd-id> --note "Manual smoke test passed in staging."
+humanize-flow verify <bd-id> --review docs/humanize-flow/<slug>/reviews/<review>.md
+humanize-flow verify <bd-id> --yes
+```
+
+If a latest passing review is available, `verify` links the confirmation to that review. If no review is available, it records a standalone manual verification instead of blocking. When `--review FILE` is passed explicitly, the selected review must have verdict `pass`; this avoids linking manual confirmation to a failed or unparseable review by mistake.
+
+`verify` writes a local verification artifact under `.humanize-flow/verifications/` and updates the handoff's `latest_human_verification` artifact when a matching handoff exists. This is the explicit signal that the human gate is complete and delivery commands can proceed.
 
 ## `humanize-flow review-feedback`
 
@@ -272,11 +300,20 @@ The PR title and body follow the configured workflow language from `humanize-flo
 
 ## `humanize-flow status`
 
-Show handoff states and Beads ready queue.
+Show a one-glance workflow status view.
 
 ```bash
 humanize-flow status
+humanize-flow status --json
+humanize-flow status --ai
+humanize-flow status --explain
 ```
+
+The default view summarizes the repository state, latest Humanize Flow run/review activity, latest review verdicts, Beads ready queue, approved handoffs, inner humanize/RLCR traces, suspicious blocker signals, and suggested next actions. It is deterministic and does not call AI.
+
+`--json` prints the same snapshot as machine-readable JSON for automation or for another agent to inspect.
+
+`--ai` first prints the deterministic status view, then asks Codex to explain the current status snapshot in plain human language using the configured workflow language. `--explain` is an alias. The prompt and explanation are saved under `.humanize-flow/runs/<timestamp>-status/`.
 
 ## Environment variables
 
@@ -287,6 +324,7 @@ humanize-flow status
 | `HUMANIZE_FLOW_CLAUDE_MODEL` | Override the configured Claude Code worker model. |
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | Override the configured Claude Code permission mode. |
 | `HUMANIZE_FLOW_CLAUDE_HUMANIZE` | Override Claude Code humanize mode (`required`, `auto`, or `off`). |
+| `HUMANIZE_FLOW_CLAUDE_ENV_FILE` | Opt-in env file loaded into Claude Code worker runs. |
 | `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_REVIEW_YOLO` | Override whether review/review-feedback pass Codex `--dangerously-bypass-approvals-and-sandbox`. |

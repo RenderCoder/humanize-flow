@@ -31,13 +31,16 @@ $humanize-flow-planner
 
 ```text
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-面向人类的生成产物默认使用英文。使用 `humanize-flow i18n zh` 可把完整链路切换到简体中文，包括 `bd-plan.md`、handoff prose，以及生成的 Beads epic/task 标题、描述和验收标准。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+面向人类的生成产物默认使用英文。使用 `humanize-flow i18n zh` 可把完整链路切换到简体中文，包括 `jira-requirement.md`、`bd-plan.md`、handoff prose，以及生成的 Beads epic/task 标题、描述和验收标准。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+
+`jira-requirement.md` 是面向协作的需求文档，适合贴到 Jira 类内部系统中。它会先解释 WHY/context，用非工程同事也能理解的语言说明需求，并在需要时把技术细节单独拆到技术说明部分。
 
 非交互方式：
 
@@ -65,7 +68,7 @@ CLI 流程：
 humanize-flow plan-from-bd <bd-id> --slug <slug>
 ```
 
-这条路径会把 `bd show <bd-id> --json` 保存为 `bd-source.json`，并写入一个链接已有任务的 handoff。原始任务文本保留在 `bd-source.json`，生成的 request、plan、acceptance、`bd-plan.md` 和 handoff 任务 prose 遵循当前工作流语言。通常不需要创建 Beads 任务，因为任务已经存在。
+这条路径会把 `bd show <bd-id> --json` 保存为 `bd-source.json`，并写入一个链接已有任务的 handoff。原始任务文本保留在 `bd-source.json`，生成的 request、Jira 风格需求、plan、acceptance、`bd-plan.md` 和 handoff 任务 prose 遵循当前工作流语言。通常不需要创建 Beads 任务，因为任务已经存在。
 
 ## 3. 批准并创建 Beads 任务
 

@@ -1,6 +1,6 @@
 ---
 name: humanize-flow-planner
-description: "Use for Humanize Flow planning with Codex: discuss unclear software requirements, create complete Markdown plans, prepare Beads bd tasks, and write a draft handoff JSON. Do not implement code or invoke Claude; stop for human approval before execution."
+description: "Use for Humanize Flow planning with Codex: discuss unclear software requirements, create Jira-style and execution Markdown plans, prepare Beads bd tasks, and write a draft handoff JSON. Do not implement code or invoke Claude; stop for human approval before execution."
 ---
 
 # humanize-flow-planner
@@ -25,7 +25,7 @@ Your job is to turn a user request into a complete, reviewable, executable plan.
 3. **Do not mark work approved without explicit human approval.** Draft artifacts are safe; execution is not.
 4. **Discuss important ambiguity.** If the requirement is underspecified in a way that can change architecture, data model, UX, security, permissions, migrations, or test scope, ask concise questions before finalizing.
 5. **Prefer explicit assumptions over hidden guesses.** Low-risk assumptions are allowed only if documented in the plan and handoff.
-6. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. This includes `request.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, Beads epic/task titles, descriptions, and acceptance criteria. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, and Beads IDs in their canonical form.
+6. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. This includes `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, Beads epic/task titles, descriptions, and acceptance criteria. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, and Beads IDs in their canonical form.
 
 ## Required output artifacts
 
@@ -33,6 +33,7 @@ For slug `<slug>`, write:
 
 ```text
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md

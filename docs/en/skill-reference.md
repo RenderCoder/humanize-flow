@@ -16,13 +16,16 @@ Core output:
 
 ```text
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-Human-review Markdown output and generated Beads prose follow the configured workflow language and default to English. This includes `bd-plan.md`, handoff prose, and Beads epic/task titles, descriptions, and acceptance criteria. Machine-readable literals such as JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers remain canonical.
+Human-review Markdown output and generated Beads prose follow the configured workflow language and default to English. This includes `jira-requirement.md`, `bd-plan.md`, handoff prose, and Beads epic/task titles, descriptions, and acceptance criteria. Machine-readable literals such as JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers remain canonical.
+
+`jira-requirement.md` should be written as a Jira-style requirement for cross-functional review: WHY/context first, plain-language stakeholder sections, and a separate technical notes section when needed.
 
 ## `humanize-flow-bd-planner`
 
@@ -47,6 +50,7 @@ Core output:
 ```text
 docs/humanize-flow/<slug>/bd-source.json
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md

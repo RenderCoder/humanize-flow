@@ -20,6 +20,7 @@
   "open_questions": [],
   "artifacts": {
     "request": "docs/humanize-flow/bd-1234-undo-redo/request.md",
+    "jira_requirement": "docs/humanize-flow/bd-1234-undo-redo/jira-requirement.md",
     "plan": "docs/humanize-flow/bd-1234-undo-redo/plan.md",
     "acceptance": "docs/humanize-flow/bd-1234-undo-redo/acceptance.md",
     "bd_plan": "docs/humanize-flow/bd-1234-undo-redo/bd-plan.md",

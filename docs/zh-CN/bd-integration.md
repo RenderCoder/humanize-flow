@@ -101,7 +101,7 @@ Worker 应读取任务：
 bd show <bd-id> --json
 ```
 
-Beads 任务是队列记忆，不是完整实现契约。由 Humanize Flow 创建的 Beads description 会在路径已知时链接回 handoff、request、plan、acceptance criteria 和 Beads plan。Worker 必须读取已批准 handoff、`plan.md` 和 `acceptance.md`；如果这些产物缺失，应该停止，而不是只根据简短 Beads 文本实现。
+Beads 任务是队列记忆，不是完整实现契约。由 Humanize Flow 创建的 Beads description 会在路径已知时链接回 handoff、request、Jira 风格需求、plan、acceptance criteria 和 Beads plan。Worker 必须读取已批准 handoff、`plan.md` 和 `acceptance.md`；如果这些产物缺失，应该停止，而不是只根据简短 Beads 文本实现。
 
 它不应该静默扩大范围。发现的新工作应按项目策略创建新的 Beads issue 或作为 reviewer finding 记录。
 

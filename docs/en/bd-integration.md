@@ -101,7 +101,7 @@ The worker should read the task:
 bd show <bd-id> --json
 ```
 
-The Beads task is queue memory, not the whole implementation contract. Humanize Flow-created Beads descriptions include links back to the handoff, request, plan, acceptance criteria, and Beads plan when those paths are known. The worker must read the approved handoff plus `plan.md` and `acceptance.md`; if those artifacts are missing, it should stop instead of implementing from the concise Beads text alone.
+The Beads task is queue memory, not the whole implementation contract. Humanize Flow-created Beads descriptions include links back to the handoff, request, Jira-style requirement, plan, acceptance criteria, and Beads plan when those paths are known. The worker must read the approved handoff plus `plan.md` and `acceptance.md`; if those artifacts are missing, it should stop instead of implementing from the concise Beads text alone.
 
 It should not silently expand scope. Discovered work should become a new Beads issue or a reviewer finding, depending on project policy.
 

@@ -16,13 +16,16 @@ $humanize-flow-planner
 
 ```text
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-面向人工审核的 Markdown 产物和生成的 Beads prose 遵循工作流语言配置，默认使用英文。这包括 `bd-plan.md`、handoff prose，以及 Beads epic/task 标题、描述和验收标准。JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符等机器可读字面量保持原始形式。
+面向人工审核的 Markdown 产物和生成的 Beads prose 遵循工作流语言配置，默认使用英文。这包括 `jira-requirement.md`、`bd-plan.md`、handoff prose，以及 Beads epic/task 标题、描述和验收标准。JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符等机器可读字面量保持原始形式。
+
+`jira-requirement.md` 应写成便于跨职能评审的 Jira 风格需求：WHY/context 优先，主体面向业务和协作角色说人话，必要时单独提供技术说明。
 
 ## `humanize-flow-bd-planner`
 
@@ -47,6 +50,7 @@ $humanize-flow-bd-planner
 ```text
 docs/humanize-flow/<slug>/bd-source.json
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md

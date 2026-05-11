@@ -1,6 +1,7 @@
 # Local runtime state
 .humanize-flow/runs/
 .humanize-flow/tmp/
+.humanize-flow/verifications/
 docs/humanize-flow/unknown/
 
 # Generated packages

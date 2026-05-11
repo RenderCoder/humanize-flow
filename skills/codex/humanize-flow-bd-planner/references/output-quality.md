@@ -14,6 +14,12 @@ Include:
 - interpreted user intent
 - assumptions and unresolved questions
 
+## `jira-requirement.md`
+
+Write a Jira-style Markdown requirement suitable for pasting into an internal collaboration system. It should be readable by product managers, project managers, QA, support, and other non-engineering stakeholders.
+
+Include WHY / context before HOW / WHAT, explain the value and affected workflow in plain language, summarize the proposed implementation strategy, list concrete requirements and acceptance criteria, and add a separate technical notes section for architecture, data, permission, migration, compatibility, or testing details when needed.
+
 ## `plan.md`
 
 Include:

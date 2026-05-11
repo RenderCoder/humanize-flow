@@ -119,6 +119,17 @@ if [ -n "${CLAUDE_RUN_COUNT:-}" ]; then
   count=$((count + 1))
   printf '%s\n' "$count" > "$CLAUDE_RUN_COUNT"
 fi
+if [ -n "${CLAUDE_FAIL_ONCE_FILE:-}" ] && [ ! -f "$CLAUDE_FAIL_ONCE_FILE" ]; then
+  printf 'failed-once\n' > "$CLAUDE_FAIL_ONCE_FILE"
+  printf 'simulated transient Claude network failure\n' >&2
+  exit 42
+fi
+if [ -n "${CLAUDE_ENV_CAPTURE:-}" ]; then
+  {
+    printf 'ANTHROPIC_BASE_URL=%s\n' "${ANTHROPIC_BASE_URL:-}"
+    printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "${ANTHROPIC_AUTH_TOKEN:-}"
+  } > "$CLAUDE_ENV_CAPTURE"
+fi
 printf '%s\n' "$*" > "$CLAUDE_ARGS_CAPTURE"
 printf '{"type":"result","subtype":"success","result":"ok"}\n'
 CLAUDE
@@ -132,8 +143,16 @@ chmod +x "$TMP/fake-bin/humanize"
 cat > "$TMP/fake-bin/codex" <<'CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -n "${CODEX_FAIL_ONCE_FILE:-}" ] && [ ! -f "$CODEX_FAIL_ONCE_FILE" ]; then
+  printf 'failed-once\n' > "$CODEX_FAIL_ONCE_FILE"
+  printf 'simulated transient Codex network failure\n' >&2
+  exit 43
+fi
 printf '%s\n' "$*" > "$CODEX_ARGS_CAPTURE"
 case "$*" in
+  *"explaining a Humanize Flow status snapshot"*)
+    printf 'Status explanation: latest Humanize Flow activity is understandable from the snapshot.\n'
+    ;;
   *"selecting which changed files belong in one git commit"*)
     printf 'commit-test.txt\n'
     ;;
@@ -208,9 +227,10 @@ chmod +x "$TMP/fake-bin/gh"
   grep -R 'language code: en' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
   HUMANIZE_FLOW_LANGUAGE=zh PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan-from-bd bd-1234 --slug imported-task-zh --no-codex >/dev/null
   grep -R 'Simplified Chinese (language code: zh)' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
-  grep -R 'generated bd.tasks title, description, and acceptance criteria fields' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
+  grep -R 'jira-requirement.md, bd-plan.md, and generated bd.tasks title, description, and acceptance criteria fields' .humanize-flow/runs/*/bd-planner-prompt.md >/dev/null
   HUMANIZE_FLOW_LANGUAGE=zh PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" plan --slug request-zh --request "Add export support" --no-codex >/dev/null
-  grep -R 'bd-plan.md and Beads epic/task titles, descriptions, and acceptance criteria' .humanize-flow/runs/*/planner-prompt.md >/dev/null
+  grep -R 'request.md, jira-requirement.md, plan.md, acceptance.md, bd-plan.md' .humanize-flow/runs/*/planner-prompt.md >/dev/null
+  grep -R 'jira-requirement.md, bd-plan.md, and Beads epic/task titles, descriptions, and acceptance criteria' .humanize-flow/runs/*/planner-prompt.md >/dev/null
   python3 - <<'PY'
 import json
 from pathlib import Path
@@ -222,6 +242,7 @@ data = {
     'approval': {'status': 'approved'},
     'artifacts': {
         'request': 'docs/humanize-flow/imported-task/request.md',
+        'jira_requirement': 'docs/humanize-flow/imported-task/jira-requirement.md',
         'plan': 'docs/humanize-flow/imported-task/plan.md',
         'acceptance': 'docs/humanize-flow/imported-task/acceptance.md',
         'bd_plan': 'docs/humanize-flow/imported-task/bd-plan.md',
@@ -236,6 +257,7 @@ path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
 PY
   mkdir -p docs/humanize-flow/imported-task
   printf '# Request\n\nAdd undo redo support.\n' > docs/humanize-flow/imported-task/request.md
+  printf '# Jira Requirement\n\nExplain why undo redo support matters.\n' > docs/humanize-flow/imported-task/jira-requirement.md
   printf '# Plan\n\nImplement undo redo support.\n\n## Acceptance Criteria\n\n- Undo works.\n' > docs/humanize-flow/imported-task/plan.md
   printf '# Acceptance\n\n- Undo works.\n' > docs/humanize-flow/imported-task/acceptance.md
   printf '# Beads Plan\n\n- bd-1234\n' > docs/humanize-flow/imported-task/bd-plan.md
@@ -254,6 +276,7 @@ data = {
     'approval': {'status': 'approved'},
     'artifacts': {
         'request': 'docs/humanize-flow/zh-materialize/request.md',
+        'jira_requirement': 'docs/humanize-flow/zh-materialize/jira-requirement.md',
         'plan': 'docs/humanize-flow/zh-materialize/plan.md',
         'acceptance': 'docs/humanize-flow/zh-materialize/acceptance.md',
         'bd_plan': 'docs/humanize-flow/zh-materialize/bd-plan.md',
@@ -265,6 +288,7 @@ PY
   HUMANIZE_FLOW_LANGUAGE=zh BD_CREATE_ARGS_CAPTURE="$TMP/bd-materialize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" materialize-bd zh-materialize >/dev/null
   grep -q 'Humanize Flow 上下文' "$TMP/bd-materialize-args.txt"
   grep -q '需求' "$TMP/bd-materialize-args.txt"
+  grep -q 'Jira 风格需求' "$TMP/bd-materialize-args.txt"
   grep -q 'Beads 计划' "$TMP/bd-materialize-args.txt"
   mkdir -p docs/humanize-flow/imported-task/reviews
   printf 'old review without verdict\n' > docs/humanize-flow/imported-task/reviews/20260507-000000-bd-1234.md
@@ -282,6 +306,25 @@ PY
   grep -q '/humanize:start-rlcr-loop docs/humanize-flow/imported-task/plan.md --yolo' "$TMP/claude-args.txt"
   grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/20260509-000000-bd-1234.md' "$TMP/claude-args.txt"
   grep -q 'Do not bulk-load docs/humanize-flow/imported-task/reviews/' "$TMP/claude-args.txt"
+  cat > .humanize-flow/claude-provider.env <<'ENV'
+# Test provider override loaded only when requested.
+ANTHROPIC_BASE_URL=https://claude-provider.example/v1
+ANTHROPIC_AUTH_TOKEN='provider token'
+ENV
+  CLAUDE_ENV_CAPTURE="$TMP/claude-default-env.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-default-env-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >/dev/null
+  grep -qx 'ANTHROPIC_BASE_URL=' "$TMP/claude-default-env.txt"
+  CLAUDE_ENV_CAPTURE="$TMP/claude-provider-env.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-provider-env-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize --env-file .humanize-flow/claude-provider.env >"$TMP/claude-provider.stdout"
+  grep -qx 'ANTHROPIC_BASE_URL=https://claude-provider.example/v1' "$TMP/claude-provider-env.txt"
+  grep -qx 'ANTHROPIC_AUTH_TOKEN=provider token' "$TMP/claude-provider-env.txt"
+  grep -q 'Claude env file: .humanize-flow/claude-provider.env' "$TMP/claude-provider.stdout"
+  "$ROOT/bin/humanize-flow" config set claude.env_file .humanize-flow/claude-provider.env >/dev/null
+  test "$("$ROOT/bin/humanize-flow" config get claude.env_file)" = ".humanize-flow/claude-provider.env"
+  CLAUDE_ENV_CAPTURE="$TMP/claude-config-env.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-config-env-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >/dev/null
+  grep -qx 'ANTHROPIC_BASE_URL=https://claude-provider.example/v1' "$TMP/claude-config-env.txt"
+  CLAUDE_ENV_CAPTURE="$TMP/claude-no-env-file.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-no-env-file-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize --no-env-file >/dev/null
+  grep -qx 'ANTHROPIC_BASE_URL=' "$TMP/claude-no-env-file.txt"
+  "$ROOT/bin/humanize-flow" config set claude.env_file off >/dev/null
+  test "$("$ROOT/bin/humanize-flow" config get claude.env_file)" = ""
   CLAUDE_ARGS_CAPTURE="$TMP/claude-no-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >/dev/null
   grep -q 'Claude humanize mode: off' "$TMP/claude-no-humanize-args.txt"
   "$ROOT/bin/humanize-flow" config set claude.humanize auto >/dev/null
@@ -305,6 +348,36 @@ PY
   grep -q 'Task id: bd-1234' "$TMP/codex-review-task-args.txt"
   grep -q 'Review only Beads task `bd-1234` within handoff `imported-task`' "$TMP/codex-review-task-args.txt"
   grep -q 'Do not require sibling tasks from the same Epic/handoff to be complete' "$TMP/codex-review-task-args.txt"
+  PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" verify bd-1234 --yes --note "Manual smoke verification passed." >/dev/null
+  test "$(find .humanize-flow/verifications -name '*.json' -print | wc -l | tr -d ' ')" -gt 0
+  python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path('.humanize-flow/handoffs/imported-task.json').read_text(encoding='utf-8'))
+artifact = data.get('artifacts', {}).get('latest_human_verification', '')
+assert artifact.endswith('.json'), artifact
+verification = json.loads(Path(artifact).read_text(encoding='utf-8'))
+assert verification['bd_id'] == 'bd-1234', verification
+assert verification['review_verdict'] == 'pass', verification
+assert verification['verification_scope'] == 'linked_pass_review', verification
+assert 'Manual smoke verification passed.' in verification['note'], verification
+PY
+  PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" verify bd-5678 --yes --note "Standalone manual verification passed." >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+matches = []
+for path in Path('.humanize-flow/verifications').glob('manual-bd-5678-*.json'):
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if data.get('bd_id') == 'bd-5678':
+        matches.append(data)
+assert matches, 'standalone verification for bd-5678 not found'
+verification = matches[-1]
+assert verification['review'] == '', verification
+assert verification['review_verdict'] == '', verification
+assert verification['verification_scope'] == 'standalone_manual', verification
+assert 'Standalone manual verification passed.' in verification['note'], verification
+PY
   CODEX_ARGS_CAPTURE="$TMP/codex-review-sandbox-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task --sandbox workspace-write >/dev/null
   grep -q -- '--sandbox workspace-write' "$TMP/codex-review-sandbox-args.txt"
   ! grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-review-sandbox-args.txt"
@@ -344,16 +417,123 @@ PY
   "$ROOT/bin/humanize-flow" config set review.yolo false >/dev/null
   CODEX_ARGS_CAPTURE="$TMP/codex-config-sandbox-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
   grep -q -- '--sandbox workspace-write' "$TMP/codex-config-sandbox-review-args.txt"
-  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run imported-task --yolo --max-round 2 >/dev/null
+  PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --limit 4 >"$TMP/status.txt"
+  grep -q '^Humanize Flow Status' "$TMP/status.txt"
+  grep -q '^Recent Activity:' "$TMP/status.txt"
+  grep -q '^Recent Reviews:' "$TMP/status.txt"
+  grep -q '^Ready Beads:' "$TMP/status.txt"
+  PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --json --limit 4 >"$TMP/status.json"
+  python3 - "$TMP/status.json" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1], encoding='utf-8'))
+assert data["schema_version"] == "1"
+assert data["recent_runs"], data
+assert "next_actions" in data
+assert "ahead" in data["git"]
+assert any("humanize-flow run bd-1234 --yolo" in action for action in data["next_actions"]), data["next_actions"]
+PY
+  CODEX_ARGS_CAPTURE="$TMP/codex-status-explain-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --explain --limit 4 >"$TMP/status-explain.txt"
+  grep -q 'Status explanation:' "$TMP/status-explain.txt"
+  grep -q 'Status snapshot JSON:' "$TMP/codex-status-explain-args.txt"
+  CODEX_ARGS_CAPTURE="$TMP/codex-status-ai-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --ai --limit 4 >"$TMP/status-ai.txt"
+  grep -q 'Status explanation:' "$TMP/status-ai.txt"
+  grep -q 'explaining a Humanize Flow status snapshot' "$TMP/codex-status-ai-args.txt"
+  python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('.humanize-flow/handoffs/yolo-task.json')
+data = {
+    'schema_version': '1',
+    'slug': 'yolo-task',
+    'state': 'approved',
+    'approval': {'status': 'approved'},
+    'artifacts': {
+        'request': 'docs/humanize-flow/yolo-task/request.md',
+        'plan': 'docs/humanize-flow/yolo-task/plan.md',
+        'acceptance': 'docs/humanize-flow/yolo-task/acceptance.md',
+    },
+    'bd': {
+        'materialized': True,
+        'tasks': [{'key': 'source-task', 'bd_id': 'bd-yolo'}],
+    },
+    'execution': {'current_bd_id': 'bd-yolo'},
+}
+path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+  mkdir -p docs/humanize-flow/yolo-task
+  printf '# Request\n' > docs/humanize-flow/yolo-task/request.md
+  printf '# Plan\n' > docs/humanize-flow/yolo-task/plan.md
+  printf '# Acceptance\n' > docs/humanize-flow/yolo-task/acceptance.md
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-yolo --yolo --max-round 2 >"$TMP/yolo.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "2"
   grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-yolo-args.txt"
   grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-args.txt"
   grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-yolo-review-args.txt"
-  grep -q 'Latest review path: docs/humanize-flow/imported-task/reviews/' "$TMP/claude-yolo-args.txt"
-  grep -R 'YOLO second review passed' docs/humanize-flow/imported-task/reviews >/dev/null
+  grep -q 'human verification gate: YOLO automates Claude work and Codex review only' "$TMP/yolo.stdout"
+  grep -q 'Latest review path: docs/humanize-flow/yolo-task/reviews/' "$TMP/claude-yolo-args.txt"
+  grep -R 'YOLO second review passed' docs/humanize-flow/yolo-task/reviews >/dev/null
+  python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('.humanize-flow/handoffs/retry-task.json')
+data = {
+    'schema_version': '1',
+    'slug': 'retry-task',
+    'state': 'approved',
+    'approval': {'status': 'approved'},
+    'artifacts': {
+        'request': 'docs/humanize-flow/retry-task/request.md',
+        'plan': 'docs/humanize-flow/retry-task/plan.md',
+        'acceptance': 'docs/humanize-flow/retry-task/acceptance.md',
+    },
+    'bd': {
+        'materialized': True,
+        'tasks': [{'key': 'source-task', 'bd_id': 'bd-retry'}],
+    },
+    'execution': {'current_bd_id': 'bd-retry'},
+}
+path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+  mkdir -p docs/humanize-flow/retry-task
+  printf '# Request\n' > docs/humanize-flow/retry-task/request.md
+  printf '# Plan\n' > docs/humanize-flow/retry-task/plan.md
+  printf '# Acceptance\n' > docs/humanize-flow/retry-task/acceptance.md
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/claude-fail-once" "$TMP/codex-fail-once"
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_FAIL_ONCE_FILE="$TMP/claude-fail-once" CODEX_FAIL_ONCE_FILE="$TMP/codex-fail-once" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-retry-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-retry-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-retry --yolo --max-round 2 --retry 2 --retry-delay 0 >"$TMP/yolo-retry.stdout" 2>&1
+  test "$(cat "$TMP/yolo-claude-count.txt")" = "3"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "2"
+  grep -q 'phase retry: 2 attempt(s), 0s delay' "$TMP/yolo-retry.stdout"
+  grep -q 'retrying in 0s' "$TMP/yolo-retry.stdout"
+  python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('.humanize-flow/handoffs/required-task.json')
+data = {
+    'schema_version': '1',
+    'slug': 'required-task',
+    'state': 'approved',
+    'approval': {'status': 'approved'},
+    'artifacts': {
+        'request': 'docs/humanize-flow/required-task/request.md',
+        'plan': 'docs/humanize-flow/required-task/plan.md',
+        'acceptance': 'docs/humanize-flow/required-task/acceptance.md',
+    },
+    'bd': {
+        'materialized': True,
+        'tasks': [{'key': 'source-task', 'bd_id': 'bd-required'}],
+    },
+    'execution': {'current_bd_id': 'bd-required'},
+}
+path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+  mkdir -p docs/humanize-flow/required-task
+  printf '# Request\n' > docs/humanize-flow/required-task/request.md
+  printf '# Plan\n' > docs/humanize-flow/required-task/plan.md
+  printf '# Acceptance\n' > docs/humanize-flow/required-task/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
-  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-required-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-required-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --yolo --humanize-mode required --max-round 2 >/dev/null
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-required-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-required-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-required --yolo --humanize-mode required --max-round 2 >"$TMP/yolo-required.stdout"
   grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-required-args.txt"
   ! grep -q 'Claude humanize mode: required' "$TMP/claude-yolo-required-args.txt"
   python3 - <<'PY'
@@ -368,6 +548,7 @@ data = {
     'artifacts': {
         'plan': 'docs/humanize-flow/epic-yolo/plan.md',
         'acceptance': 'docs/humanize-flow/epic-yolo/acceptance.md',
+        'jira_requirement': 'docs/humanize-flow/epic-yolo/jira-requirement.md',
     },
     'bd': {
         'materialized': True,

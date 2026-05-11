@@ -22,8 +22,8 @@ AI coding tools are powerful, but complex work fails when planning, implementati
 
 | Component | Name | Purpose |
 | --- | --- | --- |
-| Codex skill | `humanize-flow-planner` | Discuss a new requirement, generate Markdown artifacts, prepare Beads tasks, write draft handoff JSON. |
-| Codex skill | `humanize-flow-bd-planner` | Start from an existing Beads task ID, discuss missing details, generate Markdown artifacts, and link a draft handoff to the original task without duplicating it. |
+| Codex skill | `humanize-flow-planner` | Discuss a new requirement, generate Jira-style and execution Markdown artifacts, prepare Beads tasks, write draft handoff JSON. |
+| Codex skill | `humanize-flow-bd-planner` | Start from an existing Beads task ID, discuss missing details, generate Jira-style and execution Markdown artifacts, and link a draft handoff to the original task without duplicating it. |
 | Claude Code skill | `humanize-flow-worker` | Implement exactly one approved Beads task and request review. |
 | Codex skill | `humanize-flow-reviewer` | Review implementation against handoff, plan, acceptance criteria, tests, and git diff. |
 | CLI | `humanize-flow` | Install, initialize, approve, materialize Beads tasks, run workers, run reviews, inspect status. |
@@ -78,6 +78,8 @@ humanize-flow run-next
 humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
 humanize-flow review-feedback <bd-id>
+humanize-flow status --ai
+humanize-flow verify <bd-id>
 humanize-flow commit
 humanize-flow push
 humanize-flow pr
@@ -89,7 +91,15 @@ Worker runs default to Claude Code print mode with detailed progress visible in 
 humanize-flow run <bd-id> --interactive
 ```
 
+Claude provider overrides are opt-in. By default, worker runs use Claude Code's normal global provider/auth configuration. Use `humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env`, `HUMANIZE_FLOW_CLAUDE_ENV_FILE`, or `humanize-flow config set claude.env_file <file>` when you intentionally want a project-specific provider environment. Keep token-bearing env files untracked.
+
+Use `humanize-flow status` when a run looks stuck. It summarizes the latest run/review logs, Beads ready queue, handoff state, inner humanize/RLCR traces, suspicious blocker signals, and next actions. Add `--ai` to ask Codex for a plain-language diagnosis of the current status based on the deterministic status snapshot. `--explain` is kept as an alias.
+
 Use `humanize-flow run <bd-id> --yolo` for an approved handoff when you want the CLI to force Claude Code permission mode `bypassPermissions`, force Codex review yolo mode, and repeat Claude correction plus Codex review until the review passes or the 3-round default limit is reached. YOLO forces `--humanize-mode off` to avoid nested review loops. When the target is a handoff slug or Beads Epic ID, YOLO re-queries `bd ready --json` before each child task, selects the next ready child that belongs to the handoff, preserving Beads' ready ordering instead of the handoff's static child order. After a child task passes review, the CLI closes that Beads task so dependencies can unblock the next ready task. Each Codex review is scoped to the completed child task; Codex must not fail it just because sibling Epic tasks remain unfinished. Override the per-task correction limit with `--max-round N`.
+
+YOLO separates business correction rounds from transient infrastructure retries. `--max-round` controls how many Claude-fix plus Codex-review correction rounds a task may use. `--retry N` and `--retry-delay SECONDS` control retries for failed phases such as Claude provider calls, Codex review calls, `bd ready`, and Beads close operations. Network or provider failures do not consume a correction round; if retries are exhausted, the CLI prints a copyable `humanize-flow run ... --yolo` command so the same handoff can be continued later.
+
+YOLO does not replace human verification. When Codex returns `pass`, complete the review report's `Human verification guide`, then run `humanize-flow verify <bd-id>` to record that the manual gate is complete. If no review artifact exists, `verify` still records a standalone human confirmation. Delivery commands such as `commit`, `push`, `pr`, and release steps should happen after that explicit verification.
 
 After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language with WHY/context prioritized over HOW/WHAT, includes passing review `Human verification guide` content as reviewer-facing validation context, saves the draft under `.humanize-flow/runs/`, prompts for the GitHub remote when multiple remotes exist, and creates the PR with `gh pr create --repo`.
 
@@ -126,7 +136,9 @@ humanize-flow plan --slug undo-redo --from examples/minimal-feature-request.md
 humanize-flow plan-from-bd bd-1234 --slug undo-redo
 ```
 
-Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese for planning docs including `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers stay in their canonical form.
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese for planning docs including `jira-requirement.md` and `bd-plan.md`, handoff prose, materialized Beads epic/task titles, descriptions, acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose. Machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers stay in their canonical form.
+
+`jira-requirement.md` is a Jira-style Markdown requirement intended for internal collaboration systems. It explains WHY/context first, keeps the main sections readable for non-engineering stakeholders, and separates hard technical notes when the requirement needs them.
 
 Beads tasks are allowed to stay concise for queue readability. The execution contract is not the short Beads text alone: Claude Code worker prompts require the approved handoff plus `plan.md` and `acceptance.md`, and Codex review blocks when those artifacts are missing.
 

@@ -31,13 +31,16 @@ Expected planning artifacts:
 
 ```text
 docs/humanize-flow/<slug>/request.md
+docs/humanize-flow/<slug>/jira-requirement.md
 docs/humanize-flow/<slug>/plan.md
 docs/humanize-flow/<slug>/acceptance.md
 docs/humanize-flow/<slug>/bd-plan.md
 .humanize-flow/handoffs/<slug>.json
 ```
 
-Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese. This includes `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria. Keep machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers in their canonical form.
+Human-facing generated artifacts default to English. Use `humanize-flow i18n zh` to switch the full workflow to Simplified Chinese. This includes `jira-requirement.md`, `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria. Keep machine-readable JSON keys, enum values, labels, paths, commands, APIs, Beads IDs, and code identifiers in their canonical form.
+
+`jira-requirement.md` is the collaboration-facing requirement document. It is meant to be pasted into Jira-like internal systems, so it explains WHY/context first, uses plain language for non-engineering readers, and keeps technical details in a separate section when needed.
 
 For non-interactive use:
 
@@ -65,7 +68,7 @@ CLI flow:
 humanize-flow plan-from-bd <bd-id> --slug <slug>
 ```
 
-This path captures `bd show <bd-id> --json` as `bd-source.json` and writes a handoff that links the existing task. Raw source task text remains in `bd-source.json`, while generated request, plan, acceptance, `bd-plan.md`, and handoff task prose follow the configured workflow language. It normally skips Beads materialization because the task already exists.
+This path captures `bd show <bd-id> --json` as `bd-source.json` and writes a handoff that links the existing task. Raw source task text remains in `bd-source.json`, while generated request, Jira-style requirement, plan, acceptance, `bd-plan.md`, and handoff task prose follow the configured workflow language. It normally skips Beads materialization because the task already exists.
 
 ## 3. Approve and materialize Beads tasks
 

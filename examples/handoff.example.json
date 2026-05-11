@@ -13,6 +13,7 @@
   "open_questions": [],
   "artifacts": {
     "request": "docs/humanize-flow/undo-redo/request.md",
+    "jira_requirement": "docs/humanize-flow/undo-redo/jira-requirement.md",
     "plan": "docs/humanize-flow/undo-redo/plan.md",
     "acceptance": "docs/humanize-flow/undo-redo/acceptance.md",
     "bd_plan": "docs/humanize-flow/undo-redo/bd-plan.md"

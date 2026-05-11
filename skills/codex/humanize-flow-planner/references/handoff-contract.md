@@ -28,6 +28,18 @@ schemas/handoff.schema.json
 
 Use repository-relative paths so the handoff is portable across machines.
 
+The `artifacts` map should include the planning Markdown files:
+
+```json
+{
+  "request": "docs/humanize-flow/<slug>/request.md",
+  "jira_requirement": "docs/humanize-flow/<slug>/jira-requirement.md",
+  "plan": "docs/humanize-flow/<slug>/plan.md",
+  "acceptance": "docs/humanize-flow/<slug>/acceptance.md",
+  "bd_plan": "docs/humanize-flow/<slug>/bd-plan.md"
+}
+```
+
 ## Approval
 
 Never set:

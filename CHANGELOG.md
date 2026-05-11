@@ -4,6 +4,18 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## [0.5.4] - 2026-05-11
+
+### Added
+
+- Add a richer `humanize-flow status` view with latest run/review activity, Beads ready queue, handoff state, inner humanize/RLCR traces, blocker signals, suggested next actions, `--json`, and Codex-powered `--ai` / `--explain`.
+- Add opt-in Claude Code provider env-file support for worker runs via `run --env-file`, `run --no-env-file`, `HUMANIZE_FLOW_CLAUDE_ENV_FILE`, and `claude.env_file`.
+- Add `humanize-flow verify` to explicitly record that a human completed the Human verification guide after a passing review, allow standalone manual verification when no review artifact exists, and make YOLO startup messaging disclose that this gate is not automated.
+- Add planner output for `jira-requirement.md`, a Jira-style Markdown requirement document for internal collaboration systems that follows the configured workflow language.
+- Add YOLO phase retries with `run --yolo --retry N --retry-delay SECONDS` so transient Claude, Codex, or Beads command failures do not consume business correction rounds and print a copyable continuation command when retries are exhausted.
+
 ## [0.5.3] - 2026-05-10
 
 ### Changed

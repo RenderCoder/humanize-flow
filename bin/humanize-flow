@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.3"
+HF_VERSION="0.5.4"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -44,11 +44,13 @@ Commands:
   review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
   review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE] [--review FILE]
                                Merge human review/test feedback into a new Codex review report.
+  verify BD_ID_OR_SLUG         Record manual verification, linking a passing review when available.
   commit [--yes]               Use Codex to select changes, write a Lore message, and commit.
   push [--remote NAME]         Push the current branch, prompting for a remote when needed.
   pr [options]                 Use Codex to draft a professional PR and create it with GitHub CLI.
   i18n [LANG]                  Show or set artifact language (en, zh).
-  status                       Show handoff and Beads queue status.
+  status [--ai|--explain|--json]
+                               Show one-glance workflow status, logs, queue state, and next actions.
   config get KEY               Show resolved config value.
   config set KEY VALUE         Set a global config value.
   config show                  Show resolved Humanize Flow config.
@@ -261,6 +263,10 @@ review_yolo_default() {
   printf '%s\n' "$normalized"
 }
 
+claude_env_file_default() {
+  config_get "claude.env_file" "" "HUMANIZE_FLOW_CLAUDE_ENV_FILE"
+}
+
 normalize_reasoning_effort() {
   case "$1" in
     ""|low|medium|high|xhigh) printf '%s\n' "$1" ;;
@@ -335,9 +341,73 @@ language_instruction() {
   cat <<EOF
 Language policy:
 - Write human-facing generated artifacts in $name (language code: $lang), unless the user explicitly requests a different language in this run.
-- This applies to Markdown artifacts (request.md, plan.md, acceptance.md, bd-plan.md, questions.md), handoff prose fields (summary, assumptions, open_questions, bd.epic.title, bd.epic.description, bd.tasks[].title, bd.tasks[].description, bd.tasks[].acceptance_criteria), materialized Beads epic/task titles, descriptions, and embedded acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose.
+- This applies to Markdown artifacts (request.md, jira-requirement.md, plan.md, acceptance.md, bd-plan.md, questions.md), handoff prose fields (summary, assumptions, open_questions, bd.epic.title, bd.epic.description, bd.tasks[].title, bd.tasks[].description, bd.tasks[].acceptance_criteria), materialized Beads epic/task titles, descriptions, and embedded acceptance criteria, implementation summaries, review reports, pull request text, and commit message prose.
 - For existing Beads tasks, preserve raw source content in bd-source.json and source.* fields, but write generated interpretation, scope, plan, acceptance criteria, and handoff bd.* prose in $name.
 - Keep machine-readable literals in canonical form: JSON keys, enum values, labels, file paths, commands, API names, package names, code identifiers, and Beads IDs.
+EOF
+}
+
+resolve_repo_path() {
+  local path root
+  path="$1"
+  root="$(repo_root)"
+  case "$path" in
+    "") return 1 ;;
+    /*) printf '%s\n' "$path" ;;
+    *) printf '%s/%s\n' "$root" "$path" ;;
+  esac
+}
+
+normalize_claude_env_file_value() {
+  case "${1:-}" in
+    ""|none|None|NONE|off|OFF|false|FALSE|disabled|DISABLED) printf '\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+load_claude_env_file() {
+  local env_file entry env_entries
+  env_file="${1:-}"
+  [ -n "$env_file" ] || return 0
+  env_file="$(resolve_repo_path "$env_file")"
+  [ -f "$env_file" ] || die "Claude env file not found: $env_file"
+  env_entries="$(python3 - "$env_file" <<'PY'
+import re
+import shlex
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key_re = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+for lineno, raw in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+    stripped = raw.strip()
+    if not stripped or stripped.startswith('#'):
+        continue
+    if stripped.startswith('export '):
+        stripped = stripped[len('export '):].lstrip()
+    if '=' not in stripped:
+        raise SystemExit(f'{path}:{lineno}: expected KEY=VALUE')
+    key, value = stripped.split('=', 1)
+    key = key.strip()
+    if not key_re.match(key):
+        raise SystemExit(f'{path}:{lineno}: invalid environment variable name: {key}')
+    try:
+        parsed = shlex.split(value, comments=True, posix=True)
+    except ValueError as exc:
+        raise SystemExit(f'{path}:{lineno}: invalid quoted value: {exc}')
+    if len(parsed) > 1:
+        raise SystemExit(f'{path}:{lineno}: unquoted whitespace is not supported; quote the value')
+    value = parsed[0] if parsed else ''
+    if '\n' in value or '\r' in value:
+        raise SystemExit(f'{path}:{lineno}: multiline values are not supported')
+    print(f'{key}={value}')
+PY
+)" || die "Could not parse Claude env file: $env_file"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    export "$entry"
+  done <<EOF
+$env_entries
 EOF
 }
 
@@ -520,6 +590,7 @@ language: $(language_default)
 claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
 claude.humanize: $(claude_humanize_default)
+claude.env_file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
 review.yolo: $(review_yolo_default)
@@ -533,6 +604,7 @@ EOF
         claude.model) claude_model_default ;;
         claude.permission_mode) claude_permission_mode_default ;;
         claude.humanize) claude_humanize_default ;;
+        claude.env_file) claude_env_file_default ;;
         codex.model) codex_model_default ;;
         codex.reasoning_effort) codex_reasoning_effort_default ;;
         review.yolo) review_yolo_default ;;
@@ -568,6 +640,10 @@ EOF
           normalized="$(normalize_claude_permission_mode "$value")" || die "Unsupported Claude permission mode: $value (supported: acceptEdits, auto, bypassPermissions, default, dontAsk, plan)"
           value="$normalized"
           ;;
+        claude.env_file)
+          normalized="$(normalize_claude_env_file_value "$value")"
+          value="$normalized"
+          ;;
         claude.model|codex.model) ;;
         *) die "Unsupported config key: $key" ;;
       esac
@@ -585,6 +661,8 @@ Usage:
   humanize-flow config set claude.permission_mode bypassPermissions
   humanize-flow config get claude.humanize
   humanize-flow config set claude.humanize required
+  humanize-flow config get claude.env_file
+  humanize-flow config set claude.env_file .humanize-flow/claude-provider.env
   humanize-flow config get codex.model
   humanize-flow config set codex.model gpt-5.5
   humanize-flow config get codex.reasoning_effort
@@ -717,6 +795,7 @@ language: $(language_default)
 claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
 claude.humanize: $(claude_humanize_default)
+claude.env_file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
 review.yolo: $(review_yolo_default)
@@ -734,6 +813,7 @@ cmd_doctor() {
   info "claude model: $(claude_model_default)"
   info "claude permission mode: $(claude_permission_mode_default)"
   info "claude humanize: $(claude_humanize_default)"
+  info "claude env file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")"
   info "codex model: $(display_optional_config "$(codex_model_default)" "(codex default)")"
   info "codex reasoning effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")"
   info "review yolo: $(review_yolo_default)"
@@ -824,7 +904,7 @@ EOF
     shift
   done
 
-  mkdir -p "$(state_dir)/handoffs" "$(state_dir)/runs" "$(state_dir)/tmp" "$(docs_dir)"
+  mkdir -p "$(state_dir)/handoffs" "$(state_dir)/runs" "$(state_dir)/tmp" "$(state_dir)/verifications" "$(docs_dir)"
   if [ ! -f "$(state_dir)/config.json" ]; then
     cat > "$(state_dir)/config.json" <<EOF
 {
@@ -844,7 +924,7 @@ EOF
 This directory stores Humanize Flow handoff manifests and run logs.
 
 - `handoffs/` is intended to be committed when it describes approved work.
-- `runs/` and `tmp/` are local runtime folders and may be ignored.
+- `runs/`, `tmp/`, and `verifications/` are local runtime folders and may be ignored.
 EOF
   fi
 
@@ -943,8 +1023,8 @@ Follow the humanize-flow-planner skill exactly:
 - If important ambiguity remains and this is an interactive session, discuss it with the user before finalizing.
 - If this is non-interactive and key ambiguity remains, write docs/humanize-flow/$slug/questions.md and stop with a concise summary.
 - Do not modify implementation code.
-- Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
-- Write all generated Markdown and handoff prose, including bd-plan.md and Beads epic/task titles, descriptions, and acceptance criteria, in the configured language from the language policy above.
+- Produce request.md, jira-requirement.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Write all generated Markdown and handoff prose, including jira-requirement.md, bd-plan.md, and Beads epic/task titles, descriptions, and acceptance criteria, in the configured language from the language policy above.
 - Keep the handoff in state=draft and approval.status=pending unless the user explicitly approves in-session.
 - Prepare Beads tasks in the handoff. Materialize them only after explicit human approval.
 EOF
@@ -1066,8 +1146,8 @@ Follow the humanize-flow-bd-planner skill exactly:
 - Do not modify implementation code.
 - Do not invoke Claude Code.
 - Do not create duplicate Beads tasks.
-- Produce request.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
-- Write all generated Markdown and handoff prose, including bd-plan.md and generated bd.tasks title, description, and acceptance criteria fields, in the configured language from the language policy above.
+- Produce request.md, jira-requirement.md, plan.md, acceptance.md, bd-plan.md, and .humanize-flow/handoffs/$slug.json.
+- Write all generated Markdown and handoff prose, including jira-requirement.md, bd-plan.md, and generated bd.tasks title, description, and acceptance criteria fields, in the configured language from the language policy above.
 - Preserve $source_file as bd-source.json and reference it from the handoff artifacts map.
 - Preserve source task text in bd-source.json/source metadata only; do not copy English source prose into generated plan or handoff bd.* prose when the configured language is different.
 - In the handoff, set source.type=beads, source.bd_id=$bd_id, bd.materialized=true, and execution.current_bd_id=$bd_id.
@@ -1173,6 +1253,7 @@ TEXT = {
         'context_header': 'Humanize Flow context:',
         'handoff': 'Handoff',
         'request': 'Request',
+        'jira_requirement': 'Jira-style requirement',
         'plan': 'Plan',
         'acceptance': 'Acceptance',
         'bd_plan': 'Beads plan',
@@ -1183,6 +1264,7 @@ TEXT = {
         'context_header': 'Humanize Flow 上下文:',
         'handoff': 'Handoff',
         'request': '需求',
+        'jira_requirement': 'Jira 风格需求',
         'plan': '计划',
         'acceptance': '验收标准',
         'bd_plan': 'Beads 计划',
@@ -1200,6 +1282,7 @@ def artifact_context():
     entries = [
         (text('handoff'), f'.humanize-flow/handoffs/{slug}.json'),
         (text('request'), artifacts.get('request')),
+        (text('jira_requirement'), artifacts.get('jira_requirement')),
         (text('plan'), artifacts.get('plan')),
         (text('acceptance'), artifacts.get('acceptance')),
         (text('bd_plan'), artifacts.get('bd_plan')),
@@ -1707,11 +1790,97 @@ path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding=
 PY
 }
 
+verification_artifact_for_review() {
+  local review_file
+  review_file="$1"
+  python3 - "$review_file" "$(repo_root)" "$(state_dir)" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+review = Path(sys.argv[1])
+repo = Path(sys.argv[2])
+state_dir = Path(sys.argv[3])
+try:
+    rel = review.resolve().relative_to(repo.resolve())
+except Exception:
+    rel = Path(re.sub(r'[^A-Za-z0-9_.-]+', '-', str(review)).strip('-'))
+safe = re.sub(r'[^A-Za-z0-9_.-]+', '-', str(rel)).strip('-')
+if safe.endswith('.md'):
+    safe = safe[:-3]
+print(state_dir / 'verifications' / f'{safe}.json')
+PY
+}
+
+verification_artifact_for_ref() {
+  local ref bd_id slug stamp
+  ref="$1"; bd_id="${2:-}"; slug="${3:-}"; stamp="$(timestamp)"
+  python3 - "$ref" "$bd_id" "$slug" "$(state_dir)" "$stamp" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+ref = sys.argv[1]
+bd_id = sys.argv[2]
+slug = sys.argv[3]
+state_dir = Path(sys.argv[4])
+stamp = sys.argv[5]
+raw = bd_id or ref or slug or 'manual'
+safe = re.sub(r'[^A-Za-z0-9_.-]+', '-', raw).strip('-') or 'manual'
+print(state_dir / 'verifications' / f'manual-{safe}-{stamp}.json')
+PY
+}
+
+latest_verification_for_slug() {
+  local slug ref review_file verification_file
+  slug="$1"; ref="${2:-}"
+  review_file="$(latest_review_for_slug "$slug" "$ref" 2>/dev/null || true)"
+  [ -n "$review_file" ] || return 1
+  verification_file="$(verification_artifact_for_review "$review_file")"
+  [ -f "$verification_file" ] || return 1
+  printf '%s\n' "$verification_file"
+}
+
+yolo_retry_hint() {
+  local ref max_round retry retry_delay
+  ref="$1"; max_round="$2"; retry="$3"; retry_delay="$4"
+  printf 'humanize-flow run %s --yolo --max-round %s --retry %s --retry-delay %s\n' "$ref" "$max_round" "$retry" "$retry_delay"
+}
+
+yolo_phase_with_retries() {
+  local attempts delay phase target attempt status
+  attempts="$1"; delay="$2"; phase="$3"; target="$4"; shift 4
+  attempt=1
+  while :; do
+    if ( "$@" ); then
+      return 0
+    fi
+    status=$?
+    if [ "$attempt" -ge "$attempts" ]; then
+      warn "YOLO phase failed after $attempts attempt(s): $phase for $target"
+      return "$status"
+    fi
+    warn "YOLO phase failed (attempt $attempt/$attempts): $phase for $target; retrying in ${delay}s"
+    if [ "$delay" -gt 0 ]; then sleep "$delay"; fi
+    attempt=$((attempt + 1))
+  done
+}
+
+yolo_latest_pass_review() {
+  local slug target_id latest_review verdict
+  slug="$1"; target_id="$2"
+  latest_review="$(latest_review_for_slug "$slug" "$target_id" 2>/dev/null || true)"
+  [ -n "$latest_review" ] || return 1
+  verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
+  [ "$verdict" = "pass" ] || return 1
+  printf '%s\n' "$latest_review"
+}
+
 cmd_run_once() {
   require_git_repo
   local ref mode model permission_mode output_format verbose partial hook_events humanize_mode
-  local bd_id slug file latest_review latest_review_display plan_path plan_display humanize_text run_dir prompt_file final_file raw_file skill_file skill_text prompt_text claude_args
-  ref="$1"; mode="$2"; model="$3"; permission_mode="$4"; output_format="$5"; verbose="$6"; partial="$7"; hook_events="$8"; humanize_mode="$9"
+  local bd_id slug file latest_review latest_review_display plan_path plan_display humanize_text run_dir prompt_file final_file raw_file skill_file skill_text prompt_text claude_args claude_env_file
+  ref="$1"; mode="$2"; model="$3"; permission_mode="$4"; output_format="$5"; verbose="$6"; partial="$7"; hook_events="$8"; humanize_mode="$9"; claude_env_file="${10:-}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
   [ -n "$model" ] || die "Claude model cannot be empty."
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
@@ -1730,6 +1899,7 @@ cmd_run_once() {
   if [ "$humanize_mode" = "required" ] && { [ -z "$plan_path" ] || [ ! -f "$plan_path" ]; }; then
     die "Claude humanize mode is required, but the approved plan artifact was not found for $ref. Expected plan path: $plan_display"
   fi
+  claude_env_file="$(normalize_claude_env_file_value "$claude_env_file")"
   humanize_text="$(humanize_worker_instruction "$humanize_mode" "$plan_path")"
   run_dir="$(state_dir)/runs/$(timestamp)-run-$bd_id"
   mkdir -p "$run_dir"
@@ -1776,6 +1946,12 @@ EOF
   info "worker prompt: $prompt_file"
   prompt_text="$(cat "$prompt_file")"
   claude_args="${HUMANIZE_FLOW_CLAUDE_ARGS:-}"
+  if [ -n "$claude_env_file" ]; then
+    info "Claude env file: $(repo_relative_path "$(resolve_repo_path "$claude_env_file")")"
+    load_claude_env_file "$claude_env_file"
+  else
+    info "Claude env file: disabled"
+  fi
   if [ "$mode" = "interactive" ]; then
     info "starting Claude Code interactive worker session"
     info "model: $model"
@@ -1836,15 +2012,22 @@ EOF
 
 cmd_run_yolo() {
   require_git_repo
-  local ref max_round model output_format verbose partial hook_events humanize_mode slug
+  local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay slug
   local epic_scope child_ids target_ids target_count completed_csv completed_count
-  local target_index target_id ready_ids round latest_review verdict
-  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"
+  local target_index target_id ready_ids round latest_review verdict hint
+  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
   case "$max_round" in
     ''|*[!0-9]*) die "--max-round must be a positive integer." ;;
   esac
   [ "$max_round" -ge 1 ] || die "--max-round must be at least 1."
+  case "$retry" in
+    ''|*[!0-9]*) die "--retry must be a positive integer." ;;
+  esac
+  [ "$retry" -ge 1 ] || die "--retry must be at least 1."
+  case "$retry_delay" in
+    ''|*[!0-9]*) die "--retry-delay must be a non-negative integer." ;;
+  esac
   slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
   [ -n "$slug" ] || die "YOLO mode requires an approved Humanize Flow handoff for: $ref"
   ensure_approved_handoff_for_slug "$slug"
@@ -1869,13 +2052,16 @@ cmd_run_yolo() {
     info "target count: $target_count"
   fi
   info "max rounds: $max_round"
+  info "phase retry: $retry attempt(s), ${retry_delay}s delay"
   info "humanize mode: off (forced by --yolo to avoid nested review loops)"
+  info "human verification gate: YOLO automates Claude work and Codex review only; after a pass review, run humanize-flow verify <task-id> after manual testing before commit/push/pr."
+  hint="$(yolo_retry_hint "$ref" "$max_round" "$retry" "$retry_delay")"
   completed_csv=""
   completed_count=0
   if [ "$epic_scope" -eq 1 ]; then
     while [ "$completed_count" -lt "$target_count" ]; do
-      if ! ready_ids="$(yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
-        die "YOLO Epic mode failed while querying ready child tasks for handoff: $slug"
+      if ! ready_ids="$(yolo_phase_with_retries "$retry" "$retry_delay" "query bd ready" "$slug" yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
+        die "YOLO Epic mode failed while querying ready child tasks for handoff: $slug. Retry later with: $hint"
       fi
       target_id="$(printf '%s\n' "$ready_ids" | sed '/^$/d' | head -n 1)"
       if [ -z "$target_id" ]; then
@@ -1883,12 +2069,25 @@ cmd_run_yolo() {
       fi
       target_index=$((completed_count + 1))
       info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
+      if latest_review="$(yolo_latest_pass_review "$slug" "$target_id" 2>/dev/null || true)" && [ -n "$latest_review" ]; then
+        info "YOLO target $target_id already has a passing review; marking complete without rerunning: $(repo_relative_path "$latest_review")"
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "close Beads task" "$target_id" yolo_mark_child_complete "$target_id" "$latest_review"; then
+          die "YOLO could not close already-passed Beads task $target_id. Retry later with: $hint"
+        fi
+        completed_csv="${completed_csv:+$completed_csv,}$target_id"
+        completed_count=$((completed_count + 1))
+        continue
+      fi
       round=1
       while [ "$round" -le "$max_round" ]; do
         info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
-        cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off"
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+          die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+        fi
         info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
-        cmd_review "$target_id" --yolo
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex review" "$target_id" cmd_review "$target_id" --yolo; then
+          die "YOLO Codex review failed for $target_id. Network or provider issues do not consume a correction round. Retry later with: $hint"
+        fi
         latest_review="$(latest_review_for_slug "$slug" "$target_id" 2>/dev/null || true)"
         [ -n "$latest_review" ] || die "YOLO review did not produce a non-empty review artifact for $target_id"
         verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
@@ -1897,7 +2096,9 @@ cmd_run_yolo() {
         case "$verdict" in
           pass)
             info "YOLO target $target_id completed after $round round(s): review passed."
-            yolo_mark_child_complete "$target_id" "$latest_review"
+            if ! yolo_phase_with_retries "$retry" "$retry_delay" "close Beads task" "$target_id" yolo_mark_child_complete "$target_id" "$latest_review"; then
+              die "YOLO could not close Beads task $target_id after passing review. Retry later with: $hint"
+            fi
             info "YOLO marked Beads task complete: $target_id"
             break
             ;;
@@ -1923,12 +2124,21 @@ cmd_run_yolo() {
   target_index=1
   printf '%s\n' "$target_ids" | sed '/^$/d' | while IFS= read -r target_id; do
     info "YOLO target $target_index/$target_count: $target_id"
+    if latest_review="$(yolo_latest_pass_review "$slug" "$target_id" 2>/dev/null || true)" && [ -n "$latest_review" ]; then
+      info "YOLO target $target_id already has a passing review; skipping rerun: $(repo_relative_path "$latest_review")"
+      target_index=$((target_index + 1))
+      continue
+    fi
     round=1
     while [ "$round" -le "$max_round" ]; do
       info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
-      cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off"
+      if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+        die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+      fi
       info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
-      cmd_review "$target_id" --yolo
+      if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex review" "$target_id" cmd_review "$target_id" --yolo; then
+        die "YOLO Codex review failed for $target_id. Network or provider issues do not consume a correction round. Retry later with: $hint"
+      fi
       latest_review="$(latest_review_for_slug "$slug" "$target_id" 2>/dev/null || true)"
       [ -n "$latest_review" ] || die "YOLO review did not produce a non-empty review artifact for $target_id"
       verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
@@ -1958,10 +2168,11 @@ cmd_run_yolo() {
 
 cmd_run() {
   require_git_repo
-  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode yolo max_round
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay
   ref=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
   humanize_mode="$(claude_humanize_default)"
-  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3
+  claude_env_file="$(claude_env_file_default)"
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3; retry=3; retry_delay=10
   while [ $# -gt 0 ]; do
     case "$1" in
       --interactive|-i) mode="interactive" ;;
@@ -1970,8 +2181,12 @@ cmd_run() {
       --humanize) humanize_mode="required" ;;
       --no-humanize) humanize_mode="off" ;;
       --humanize-mode) shift; humanize_mode="${1:-}" ;;
+      --env-file|--claude-env-file) shift; claude_env_file="${1:-}" ;;
+      --no-env-file) claude_env_file="" ;;
       --yolo) yolo=1; permission_mode="bypassPermissions"; humanize_mode="off" ;;
       --max-round) shift; max_round="${1:-}" ;;
+      --retry) shift; retry="${1:-}" ;;
+      --retry-delay) shift; retry_delay="${1:-}" ;;
       --text) output_format="text"; partial=0; hook_events=0 ;;
       --stream-json) output_format="stream-json"; partial=1; hook_events=1 ;;
       --no-partial) partial=0 ;;
@@ -1991,8 +2206,12 @@ Options:
   --humanize                 Require humanize/RLCR for this run.
   --no-humanize              Disable humanize/RLCR for this run.
   --humanize-mode MODE       Set humanize mode: required, auto, or off.
+  --env-file FILE            Load Claude Code provider/auth env vars from FILE for this run.
+  --no-env-file              Ignore configured HUMANIZE_FLOW_CLAUDE_ENV_FILE / claude.env_file.
   --yolo                     Run Claude+Codex review loop until pass or max rounds. Forces --humanize-mode off.
   --max-round N              Maximum YOLO correction rounds. Default: 3.
+  --retry N                  YOLO phase retry attempts for transient command failures. Default: 3.
+  --retry-delay SECONDS      Delay between YOLO phase retries. Default: 10.
   --text                     Use Claude text output instead of detailed stream-json.
   --stream-json              Use detailed stream-json internally and show a human-readable progress log. This is the default.
   --no-partial               Do not include partial message chunks in stream-json output.
@@ -2011,11 +2230,12 @@ EOF
   [ -n "$model" ] || die "Claude model cannot be empty."
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
   humanize_mode="$(normalize_humanize_mode "$humanize_mode")" || die "Unsupported Claude humanize mode: $humanize_mode (supported: required, auto, off)"
+  claude_env_file="$(normalize_claude_env_file_value "$claude_env_file")"
   if [ "$yolo" -eq 1 ]; then
     [ "$mode" != "interactive" ] || die "YOLO mode does not support --interactive."
-    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
+    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file" "$retry" "$retry_delay"
   else
-    cmd_run_once "$ref" "$mode" "$model" "$permission_mode" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode"
+    cmd_run_once "$ref" "$mode" "$model" "$permission_mode" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file"
   fi
 }
 
@@ -2455,6 +2675,101 @@ EOF
     set_handoff_artifact "$slug" "latest_human_feedback" "$feedback_file"
   fi
   info "updated review written: $output_file"
+}
+
+cmd_verify() {
+  require_git_repo
+  local ref="" note="" review_file="" bd_id slug run_dir verification_file verdict answer explicit_review=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --note) shift; note="${1:-}" ;;
+      --review) shift; review_file="${1:-}"; explicit_review=1 ;;
+      --yes|-y) answer="y" ;;
+      --help|-h|help)
+        cat <<'EOF'
+Usage:
+  humanize-flow verify BD_ID_OR_SLUG [--note TEXT] [--review FILE] [--yes]
+
+Records that a human completed the manual verification gate for a task or
+handoff. If a latest passing review is available, the verification links to it.
+If no review is available, the command records a standalone human verification.
+
+When --review FILE is passed explicitly, the selected review must have verdict
+pass. This avoids linking manual confirmation to a failed review by mistake.
+EOF
+        return 0 ;;
+      --*) die "Unknown verify option: $1" ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1"; else die "Unexpected verify argument: $1"; fi
+        ;;
+    esac
+    shift
+  done
+  [ -n "$ref" ] || die "Usage: humanize-flow verify BD_ID_OR_SLUG [--note TEXT] [--review FILE] [--yes]"
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  if [ -n "$slug" ]; then bd_id="$(bd_id_for_ref_and_slug "$ref" "$slug" 2>/dev/null || true)"; fi
+  if [ -z "${bd_id:-}" ]; then bd_id="$ref"; fi
+  if [ -z "$review_file" ] && [ -n "$slug" ]; then
+    review_file="$(latest_review_for_slug "$slug" "$bd_id" 2>/dev/null || true)"
+  fi
+  verdict=""
+  if [ -n "$review_file" ]; then
+    [ -f "$review_file" ] || die "review file not found: $review_file"
+    verdict="$(review_verdict "$review_file" 2>/dev/null || true)"
+    if [ "$verdict" != "pass" ]; then
+      if [ "$explicit_review" -eq 1 ]; then
+        die "Cannot link verification to review because verdict is '${verdict:-unparseable}', not 'pass': $review_file"
+      fi
+      warn "latest review verdict is '${verdict:-unparseable}', so verification will be recorded without linking that review: $(repo_relative_path "$review_file")"
+      review_file=""
+      verdict=""
+    fi
+  fi
+  if [ -z "${answer:-}" ] && [ -t 0 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ]; then
+    if [ -n "$review_file" ]; then
+      printf 'Mark Human verification guide as completed for %s? [y/N] ' "$(repo_relative_path "$review_file")"
+    else
+      printf 'No passing review found for %s. Record standalone human verification? [y/N] ' "$bd_id"
+    fi
+    IFS= read -r answer || answer=""
+  fi
+  case "${answer:-n}" in
+    y|Y|yes|YES|Yes) ;;
+    *) die "Verification not recorded." ;;
+  esac
+  if [ -n "$review_file" ]; then
+    verification_file="$(verification_artifact_for_review "$review_file")"
+  else
+    verification_file="$(verification_artifact_for_ref "$ref" "$bd_id" "${slug:-}")"
+  fi
+  mkdir -p "$(dirname "$verification_file")"
+  python3 - "$verification_file" "$ref" "$bd_id" "${slug:-}" "$review_file" "$verdict" "$note" <<'PY'
+import getpass
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = {
+    "schema_version": "1",
+    "verified_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "verified_by": getpass.getuser(),
+    "ref": sys.argv[2],
+    "bd_id": sys.argv[3],
+    "handoff_slug": sys.argv[4],
+    "review": sys.argv[5],
+    "review_verdict": sys.argv[6],
+    "verification_scope": "linked_pass_review" if sys.argv[5] else "standalone_manual",
+    "note": sys.argv[7],
+}
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  if [ -n "$slug" ]; then
+    set_handoff_artifact "$slug" "latest_human_verification" "$verification_file"
+  fi
+  info "human verification recorded: $verification_file"
+  info "next: humanize-flow commit, humanize-flow push, humanize-flow pr, or continue ready work with humanize-flow run-next"
 }
 
 commit_failure_looks_hook_related() {
@@ -3120,7 +3435,7 @@ Inspect:
 - git log --format=fuller $merge_base..HEAD
 - git diff --stat $merge_base..HEAD
 - git diff $merge_base..HEAD
-- docs/humanize-flow artifacts relevant to this branch, especially request.md, plan.md, acceptance.md, implementation summaries, and review reports.
+- docs/humanize-flow artifacts relevant to this branch, especially request.md, jira-requirement.md, plan.md, acceptance.md, implementation summaries, and review reports.
 - .humanize-flow/handoffs/*.json when relevant.
 - AGENTS.md and CLAUDE.md when present.
 - Human verification guide source snippets below, when present.
@@ -3231,34 +3546,582 @@ PY
   fi
 }
 
+status_snapshot_json() {
+  local limit ready_file
+  limit="$1"
+  ready_file=""
+  if command_exists bd; then
+    ready_file="$(state_dir)/tmp/status-bd-ready-$(timestamp).json"
+    mkdir -p "$(dirname "$ready_file")"
+    bd ready --json > "$ready_file" 2>/dev/null || ready_file=""
+  fi
+  python3 - "$(repo_root)" "$(state_dir)" "$(docs_dir)" "$limit" "$ready_file" "$HF_VERSION" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+state_dir = Path(sys.argv[2])
+docs_dir = Path(sys.argv[3])
+limit = int(sys.argv[4])
+ready_file = Path(sys.argv[5]) if sys.argv[5] else None
+version = sys.argv[6]
+
+def rel(path):
+    if not path:
+        return ''
+    try:
+        return str(Path(path).resolve().relative_to(repo.resolve()))
+    except Exception:
+        return str(path)
+
+def read_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+def git(args):
+    try:
+        cp = subprocess.run(['git', *args], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        return cp.stdout.strip()
+    except Exception:
+        return ''
+
+def parse_ready(data):
+    if isinstance(data, dict):
+        items = data.get('issues') or data.get('items') or data.get('data') or data.get('ready') or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get('id') or item.get('issue_id') or item.get('bead_id')
+        if not task_id:
+            continue
+        labels = item.get('labels') or item.get('label_names') or []
+        if isinstance(labels, str):
+            labels = [x.strip() for x in labels.split(',') if x.strip()]
+        out.append({
+            'id': task_id,
+            'title': item.get('title') or item.get('summary') or item.get('name') or '',
+            'status': item.get('status') or '',
+            'type': item.get('type') or item.get('issue_type') or '',
+            'priority': item.get('priority'),
+            'labels': labels,
+            'parent': item.get('parent_id') or item.get('parent') or item.get('epic_id') or '',
+        })
+    return out
+
+verdict_patterns = [
+    re.compile(r'^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b', re.I | re.M),
+    re.compile(r'^\s*`(pass|changes_requested|blocked)`\s*$', re.I | re.M),
+    re.compile(r'^\s*(pass|changes_requested|blocked)\s*$', re.I | re.M),
+]
+
+def review_verdict(path):
+    try:
+        if path.stat().st_size <= 0:
+            return ''
+        text = path.read_text(encoding='utf-8', errors='replace')
+    except Exception:
+        return ''
+    for pattern in verdict_patterns:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).lower()
+    return ''
+
+def path_mtime(path):
+    try:
+        return path.stat().st_mtime
+    except Exception:
+        return 0
+
+def latest_lines(path, max_lines=8):
+    try:
+        lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    except Exception:
+        return []
+    important = []
+    tokens = (
+        'ERROR', 'WARN', 'blocked', 'Blocker', 'changes_requested', 'REQUEST_CHANGES',
+        'pass', 'Verdict', 'result', '[result]', 'hook_progress', 'hook_response',
+        'YOLO review verdict', 'reached max rounds', 'humanize mode'
+    )
+    for line in lines:
+        if any(token in line for token in tokens):
+            important.append(line[:500])
+    return (important or lines)[-max_lines:]
+
+def safe_review_verification_path(review_path):
+    safe = re.sub(r'[^A-Za-z0-9_.-]+', '-', str(review_path)).strip('-')
+    if safe.endswith('.md'):
+        safe = safe[:-3]
+    return state_dir / 'verifications' / f'{safe}.json'
+
+def matching_verification_for_review(review_path):
+    candidate = safe_review_verification_path(review_path)
+    if candidate.exists():
+        return candidate
+    return None
+
+def verification_matches(data, refs):
+    if not isinstance(data, dict):
+        return False
+    refs = {str(item) for item in refs if item}
+    if not refs:
+        return False
+    values = {
+        str(data.get('ref') or ''),
+        str(data.get('bd_id') or ''),
+        str(data.get('handoff_slug') or ''),
+    }
+    return bool(refs & values)
+
+def latest_verification_for_refs(refs):
+    verifications_dir = state_dir / 'verifications'
+    if not verifications_dir.exists():
+        return None
+    matches = []
+    for path in verifications_dir.glob('*.json'):
+        data = read_json(path)
+        if verification_matches(data, refs):
+            matches.append(path)
+    if not matches:
+        return None
+    return sorted(matches, key=path_mtime, reverse=True)[0]
+
+def classify_run(path):
+    name = path.name
+    kind = 'other'
+    ref = ''
+    if '-run-' in name:
+        kind = 'run'
+        ref = name.split('-run-', 1)[1]
+    elif '-review-feedback-' in name:
+        kind = 'review-feedback'
+        ref = name.split('-review-feedback-', 1)[1]
+    elif '-review-' in name:
+        kind = 'review'
+        ref = name.split('-review-', 1)[1]
+    elif name.endswith('-commit'):
+        kind = 'commit'
+    elif name.endswith('-pr'):
+        kind = 'pr'
+    elif name.endswith('-status'):
+        kind = 'status'
+    files = {p.name: p for p in path.iterdir() if p.is_file()} if path.is_dir() else {}
+    status = 'unknown'
+    evidence = []
+    final = files.get('claude-final.md')
+    raw = files.get('claude-final.jsonl')
+    review_prompt = files.get('codex-reviewer-prompt.md')
+    feedback_prompt = files.get('codex-review-feedback-prompt.md')
+    commit_log = files.get('git-commit.log')
+    pr_url = files.get('pr-url.txt')
+    if final and final.exists():
+        text = final.read_text(encoding='utf-8', errors='replace')[-20000:]
+        if re.search(r'\[result\]\s+success|"subtype"\s*:\s*"success"', text):
+            status = 'completed'
+        if re.search(r'ERROR|Blocker|blocked|cannot proceed|denied|temporarily unavailable|reached max rounds', text, re.I):
+            status = 'needs_attention'
+        evidence.append(rel(final))
+    if raw and raw.exists():
+        evidence.append(rel(raw))
+    if review_prompt and review_prompt.exists():
+        evidence.append(rel(review_prompt))
+    if feedback_prompt and feedback_prompt.exists():
+        evidence.append(rel(feedback_prompt))
+    if commit_log and commit_log.exists():
+        status = 'failed'
+        evidence.append(rel(commit_log))
+    if pr_url and pr_url.exists():
+        status = 'completed'
+        evidence.append(rel(pr_url))
+    if status == 'unknown' and kind in {'review', 'review-feedback', 'commit', 'pr', 'status'}:
+        status = 'completed'
+    return {
+        'name': name,
+        'kind': kind,
+        'ref': ref,
+        'status': status,
+        'path': rel(path),
+        'modified_at': datetime.fromtimestamp(path_mtime(path), timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+        'evidence': evidence,
+        'signals': latest_lines(final or commit_log, 8) if (final or commit_log) else [],
+    }
+
+handoffs = []
+handoff_by_task = {}
+tasks_by_handoff = {}
+handoffs_dir = state_dir / 'handoffs'
+if handoffs_dir.exists():
+    for path in sorted(handoffs_dir.glob('*.json')):
+        data = read_json(path)
+        if not isinstance(data, dict):
+            handoffs.append({'slug': path.stem, 'path': rel(path), 'invalid': True})
+            continue
+        bd = data.get('bd') or {}
+        epic = bd.get('epic') or {}
+        tasks = []
+        if isinstance(epic, dict) and epic.get('bd_id'):
+            handoff_by_task[epic.get('bd_id')] = data.get('slug') or path.stem
+        for task in bd.get('tasks') or []:
+            if isinstance(task, dict):
+                task_id = task.get('bd_id') or ''
+                if task_id:
+                    handoff_by_task[task_id] = data.get('slug') or path.stem
+                tasks.append({
+                    'id': task_id,
+                    'key': task.get('key') or '',
+                    'title': task.get('title') or '',
+                })
+        source = data.get('source') or {}
+        if isinstance(source, dict) and source.get('bd_id'):
+            handoff_by_task[source.get('bd_id')] = data.get('slug') or path.stem
+        tasks_by_handoff[data.get('slug') or path.stem] = [task.get('id') for task in tasks if task.get('id')]
+        handoffs.append({
+            'slug': data.get('slug') or path.stem,
+            'path': rel(path),
+            'state': data.get('state') or '',
+            'approval': (data.get('approval') or {}).get('status') or '',
+            'materialized': bool(bd.get('materialized')),
+            'epic_id': epic.get('bd_id') if isinstance(epic, dict) else '',
+            'current_bd_id': ((data.get('execution') or {}).get('current_bd_id') or (source.get('bd_id') if isinstance(source, dict) else '')),
+            'task_count': len(tasks),
+            'tasks': tasks,
+            'latest_review': rel((data.get('artifacts') or {}).get('latest_review') or ''),
+        })
+
+ready = []
+if ready_file and ready_file.exists():
+    ready_data = read_json(ready_file)
+    ready = parse_ready(ready_data)[:limit]
+    for item in ready:
+        item['handoff'] = handoff_by_task.get(item['id'], '')
+
+reviews = []
+if docs_dir.exists():
+    for path in sorted(docs_dir.glob('*/reviews/*.md'), key=path_mtime, reverse=True):
+        verdict = review_verdict(path)
+        reviews.append({
+            'path': rel(path),
+            'slug': path.parent.parent.name,
+            'name': path.name,
+            'verdict': verdict or 'unparseable',
+            'empty': path.stat().st_size <= 0,
+            'modified_at': datetime.fromtimestamp(path_mtime(path), timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+        })
+        if len(reviews) >= limit:
+            break
+
+runs = []
+runs_dir = state_dir / 'runs'
+if runs_dir.exists():
+    for path in sorted([p for p in runs_dir.iterdir() if p.is_dir()], key=path_mtime, reverse=True):
+        run = classify_run(path)
+        if run.get('kind') == 'status':
+            continue
+        runs.append(run)
+        if len(runs) >= limit:
+            break
+
+inner_rlcr = []
+rlcr_dir = repo / '.humanize' / 'rlcr'
+if rlcr_dir.exists():
+    for path in sorted([p for p in rlcr_dir.iterdir() if p.is_dir()], key=path_mtime, reverse=True):
+        result_paths = sorted(path.glob('round-*-review-result.md'), key=path_mtime, reverse=True)
+        latest = result_paths[0] if result_paths else None
+        verdict = ''
+        if latest:
+            try:
+                tail = latest.read_text(encoding='utf-8', errors='replace')[-4000:]
+                if 'REQUEST_CHANGES' in tail:
+                    verdict = 'REQUEST_CHANGES'
+                elif 'PASS' in tail:
+                    verdict = 'PASS'
+            except Exception:
+                pass
+        inner_rlcr.append({
+            'path': rel(path),
+            'latest_review_result': rel(latest) if latest else '',
+            'latest_signal': verdict,
+            'modified_at': datetime.fromtimestamp(path_mtime(path), timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+        })
+        if len(inner_rlcr) >= min(limit, 5):
+            break
+
+dirty = git(['status', '--short', '--branch'])
+branch_status = dirty.splitlines()[0] if dirty else ''
+has_changes = any(line and not line.startswith('## ') for line in dirty.splitlines())
+ahead_match = re.search(r'\bahead\s+(\d+)', branch_status)
+behind_match = re.search(r'\bbehind\s+(\d+)', branch_status)
+ahead = int(ahead_match.group(1)) if ahead_match else 0
+behind = int(behind_match.group(1)) if behind_match else 0
+
+latest_run = runs[0] if runs else None
+latest_review = reviews[0] if reviews else None
+summary = 'No Humanize Flow run history found.'
+state = 'idle'
+next_actions = []
+warnings = []
+
+if latest_run:
+    state = latest_run['status']
+    summary = f"Latest activity is {latest_run['kind']} `{latest_run['name']}` with status `{latest_run['status']}`."
+    if latest_run['status'] in {'needs_attention', 'failed'}:
+        next_actions.append(f"Inspect {latest_run['path']}")
+if latest_review:
+    if latest_review['verdict'] == 'pass':
+        verification_path = None
+        review_refs = {latest_review.get('slug') or ''}
+        ref = latest_review['name'].removesuffix('.md').split('-', 2)[-1]
+        review_refs.add(ref)
+        slug_for_review = latest_review.get('slug') or ''
+        if slug_for_review:
+            review_refs.update(tasks_by_handoff.get(slug_for_review, []))
+        linked_verification = matching_verification_for_review(latest_review['path'])
+        if linked_verification:
+            verification_path = rel(linked_verification)
+        else:
+            standalone_verification = latest_verification_for_refs(review_refs)
+            if standalone_verification:
+                verification_path = rel(standalone_verification)
+        if verification_path:
+            next_actions.append(f'Human verification already recorded: {verification_path}.')
+            if has_changes:
+                next_actions.append('Delivery is unlocked: run humanize-flow commit when ready.')
+            elif ahead > 0:
+                next_actions.append('Delivery is unlocked: run humanize-flow push or humanize-flow pr.')
+        elif has_changes:
+            next_actions.append(f'Delivery gate: complete the Human verification guide, then run humanize-flow verify {ref}.')
+            next_actions.append('After verification, run humanize-flow commit when ready.')
+        elif ahead > 0:
+            next_actions.append(f'Delivery gate: run humanize-flow verify {ref} after manual testing; then run humanize-flow push or humanize-flow pr.')
+        else:
+            next_actions.append(f'Delivery gate: complete the Human verification guide, then run humanize-flow verify {ref}.')
+    elif latest_review['verdict'] in {'changes_requested', 'blocked'}:
+        ref = latest_review['name'].removesuffix('.md').split('-', 2)[-1]
+        next_actions.append(f"Run humanize-flow run {ref} --yolo after reviewing {latest_review['path']}.")
+if ready:
+    first_ready = ready[0]
+    if first_ready.get('handoff'):
+        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 3")
+        next_actions.append(f"Continue the handoff/Epic queue: humanize-flow run {first_ready['handoff']} --yolo --max-round 3")
+    else:
+        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 3")
+        next_actions.append("Or pick interactively: humanize-flow run-next")
+if inner_rlcr and latest_review and inner_rlcr[0].get('latest_signal') == 'REQUEST_CHANGES' and latest_review.get('verdict') == 'pass':
+    warnings.append('Inner humanize/RLCR latest review requested changes, but the outer Humanize Flow review passed. Treat outer docs/humanize-flow review as the task-close gate unless you intentionally enabled nested RLCR.')
+if not next_actions:
+    if has_changes:
+        next_actions.append('Working tree has changes. Inspect git status and run humanize-flow review or humanize-flow commit when appropriate.')
+    elif ahead > 0:
+        next_actions.append('Branch has local commits not pushed. Run humanize-flow push or humanize-flow pr when ready.')
+    elif behind > 0:
+        next_actions.append('Branch is behind upstream. Pull/rebase outside Humanize Flow before continuing.')
+    else:
+        next_actions.append('No obvious next command. Inspect the latest run/review evidence paths above.')
+
+snapshot = {
+    'schema_version': '1',
+    'generated_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+    'humanize_flow_version': version,
+    'repository': str(repo),
+    'git': {
+        'branch_status': branch_status,
+        'has_changes': has_changes,
+        'ahead': ahead,
+        'behind': behind,
+    },
+    'state': state,
+    'summary': summary,
+    'next_actions': next_actions[:5],
+    'warnings': warnings,
+    'handoffs': handoffs,
+    'ready': ready,
+    'recent_reviews': reviews,
+    'recent_runs': runs,
+    'inner_rlcr': inner_rlcr,
+}
+print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+PY
+}
+
+status_render_text() {
+  local snapshot_file
+  snapshot_file="$1"
+  python3 - "$snapshot_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as fh:
+    data = json.load(fh)
+
+def line(text=''):
+    print(text)
+
+line('Humanize Flow Status')
+line(f"- State: {data.get('state', 'unknown')}")
+line(f"- Summary: {data.get('summary', '')}")
+git = data.get('git') or {}
+line(f"- Git: {git.get('branch_status', '') or '(unknown)'}; changes={'yes' if git.get('has_changes') else 'no'}")
+if git.get('ahead') or git.get('behind'):
+    line(f"- Upstream: ahead={git.get('ahead', 0)} behind={git.get('behind', 0)}")
+line(f"- Version: {data.get('humanize_flow_version', '')}")
+
+warnings = data.get('warnings') or []
+if warnings:
+    line('')
+    line('Warnings:')
+    for item in warnings:
+        line(f"- {item}")
+
+actions = data.get('next_actions') or []
+if actions:
+    line('')
+    line('Next Actions:')
+    for item in actions:
+        line(f"- {item}")
+
+runs = data.get('recent_runs') or []
+line('')
+line('Recent Activity:')
+if not runs:
+    line("- No run/review activity found.")
+else:
+    for item in runs[:8]:
+        line(f"- {item.get('kind')} {item.get('ref') or item.get('name')}: {item.get('status')} ({item.get('path')})")
+        for signal in (item.get('signals') or [])[-2:]:
+            if signal:
+                line(f"  signal: {signal}")
+
+reviews = data.get('recent_reviews') or []
+line('')
+line('Recent Reviews:')
+if not reviews:
+    line("- No review artifacts found.")
+else:
+    for item in reviews[:8]:
+        line(f"- {item.get('verdict')}: {item.get('path')}")
+
+ready = data.get('ready') or []
+line('')
+line('Ready Beads:')
+if not ready:
+    line("- None reported by bd ready.")
+else:
+    for item in ready[:8]:
+        handoff = f" handoff={item.get('handoff')}" if item.get('handoff') else ''
+        title = f" - {item.get('title')}" if item.get('title') else ''
+        line(f"- {item.get('id')} [{item.get('type') or 'task'}]{handoff}{title}")
+
+handoffs = data.get('handoffs') or []
+line('')
+line('Handoffs:')
+if not handoffs:
+    line("- No handoffs found.")
+else:
+    for item in handoffs:
+        if item.get('invalid'):
+            line(f"- {item.get('slug')}: invalid JSON ({item.get('path')})")
+            continue
+        line(f"- {item.get('slug')}: state={item.get('state') or '?'} approval={item.get('approval') or '?'} materialized={item.get('materialized')} tasks={item.get('task_count', 0)}")
+
+inner = data.get('inner_rlcr') or []
+if inner:
+    line('')
+    line('Inner humanize/RLCR:')
+    for item in inner[:5]:
+        signal = item.get('latest_signal') or 'unknown'
+        line(f"- {signal}: {item.get('latest_review_result') or item.get('path')}")
+PY
+}
+
 cmd_status() {
   require_git_repo
-  local hdir
-  hdir="$(state_dir)/handoffs"
-  if [ ! -d "$hdir" ]; then
-    warn "No .humanize-flow/handoffs directory. Run humanize-flow init first."
-  else
-    python3 - "$hdir" <<'PY'
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-print('Handoffs:')
-for path in sorted(root.glob('*.json')):
-    try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-    except Exception as e:
-        print(f'  {path.name}: invalid JSON: {e}')
-        continue
-    approval = data.get('approval', {}).get('status', 'unknown')
-    materialized = data.get('bd', {}).get('materialized', False)
-    print(f"  {data.get('slug', path.stem):24} state={data.get('state','?'):18} approval={approval:9} bd_materialized={materialized}")
-PY
+  local explain=0 json=0 limit=8 snapshot_file prompt_file explain_file prompt_text run_dir
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --ai|--explain) explain=1 ;;
+      --json) json=1 ;;
+      --limit) shift; limit="${1:-}" ;;
+      --help|-h|help)
+        cat <<'EOF'
+Usage:
+  humanize-flow status [--ai|--explain] [--json] [--limit N]
+
+Shows a one-glance Humanize Flow status view: repository state, latest run or
+review activity, approved handoffs, Beads ready queue, suspicious blockers, and
+suggested next commands.
+
+Options:
+  --ai         Ask Codex to explain the current status snapshot in plain human language.
+  --explain    Alias for --ai.
+  --json       Print the deterministic status snapshot as JSON.
+  --limit N    Number of recent run/review directories and ready tasks to show. Default: 8.
+EOF
+        return 0 ;;
+      --*) die "Unknown status option: $1" ;;
+      *) die "Unexpected status argument: $1" ;;
+    esac
+    shift
+  done
+  case "$limit" in
+    ''|*[!0-9]*) die "--limit must be a positive integer." ;;
+  esac
+  [ "$limit" -ge 1 ] || die "--limit must be at least 1."
+  if [ "$json" -eq 1 ] && [ "$explain" -eq 0 ]; then
+    status_snapshot_json "$limit"
+    return 0
   fi
-  if command_exists bd; then
+  if [ "$explain" -eq 1 ]; then
+    command_exists codex || die "codex CLI not found; status --ai requires Codex."
+    run_dir="$(state_dir)/runs/$(timestamp)-status"
+    mkdir -p "$run_dir"
+    snapshot_file="$run_dir/status-snapshot.json"
+    prompt_file="$run_dir/codex-status-explain-prompt.md"
+    explain_file="$run_dir/status-explanation.md"
+    status_snapshot_json "$limit" > "$snapshot_file"
+    status_render_text "$snapshot_file"
+    cat > "$prompt_file" <<EOF
+You are explaining a Humanize Flow status snapshot for a developer who wants to know whether the workflow is still making progress, stuck, failed, or ready for the next command.
+
+$(language_instruction)
+
+Use only the snapshot below. Do not inspect or modify files unless the user runs another command. Be concise and practical.
+
+Explain:
+- Current state in one sentence.
+- Whether the workflow is running, blocked, passed, failed, or waiting for the next step.
+- The evidence paths that justify that conclusion.
+- The next command the user should run, if there is one.
+- Any caveat when Humanize Flow outer review and inner humanize/RLCR review could be confused.
+
+Status snapshot JSON:
+
+$(cat "$snapshot_file")
+EOF
     log ""
-    log "Ready Beads tasks:"
-    bd ready --json 2>/dev/null || bd ready || true
+    info "status snapshot: $snapshot_file"
+    info "status explain prompt: $prompt_file"
+    prompt_text="$(cat "$prompt_file")"
+    run_codex_exec --sandbox read-only "$prompt_text" | tee "$explain_file"
+    info "status explanation written: $explain_file"
+    return 0
   fi
+  snapshot_file="$(state_dir)/tmp/status-snapshot-$(timestamp).json"
+  mkdir -p "$(dirname "$snapshot_file")"
+  status_snapshot_json "$limit" > "$snapshot_file"
+  status_render_text "$snapshot_file"
 }
 
 main() {
@@ -3279,6 +4142,7 @@ main() {
     run-next) cmd_run_next "$@" ;;
     review) cmd_review "$@" ;;
     review-feedback) cmd_review_feedback "$@" ;;
+    verify) cmd_verify "$@" ;;
     commit) cmd_commit "$@" ;;
     push) cmd_push "$@" ;;
     pr) cmd_pr "$@" ;;

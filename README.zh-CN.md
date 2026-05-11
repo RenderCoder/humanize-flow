@@ -22,8 +22,8 @@ Codex 规划 → 人工确认 → Claude Code 执行 → Codex 审查
 
 | 组件 | 名称 | 作用 |
 | --- | --- | --- |
-| Codex skill | `humanize-flow-planner` | 从新需求开始讨论、生成 Markdown、准备 Beads 任务、写 draft handoff JSON。 |
-| Codex skill | `humanize-flow-bd-planner` | 从已有 Beads 任务 ID 开始，和你确认缺失细节，生成 Markdown 和 handoff JSON，并链接原任务而不是重复创建任务。 |
+| Codex skill | `humanize-flow-planner` | 从新需求开始讨论、生成 Jira 风格需求和执行 Markdown、准备 Beads 任务、写 draft handoff JSON。 |
+| Codex skill | `humanize-flow-bd-planner` | 从已有 Beads 任务 ID 开始，和你确认缺失细节，生成 Jira 风格需求和执行 Markdown，并链接原任务而不是重复创建任务。 |
 | Claude Code skill | `humanize-flow-worker` | 执行一个已批准的 Beads 任务，并请求 review。 |
 | Codex skill | `humanize-flow-reviewer` | 对照 handoff、计划、验收标准、测试和 git diff 进行审查。 |
 | CLI | `humanize-flow` | 安装、初始化、批准、创建 Beads 任务、执行 worker、执行 review、查看状态。 |
@@ -78,6 +78,8 @@ humanize-flow run-next
 humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
 humanize-flow review-feedback <bd-id>
+humanize-flow status --ai
+humanize-flow verify <bd-id>
 humanize-flow commit
 humanize-flow push
 humanize-flow pr
@@ -89,7 +91,15 @@ Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的
 humanize-flow run <bd-id> --interactive
 ```
 
+Claude provider 覆盖是显式启用的。默认 worker 使用 Claude Code 自己的全局 provider/auth 配置。需要为某个项目测试第三方 Claude Code provider 时，可以使用 `humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env`、`HUMANIZE_FLOW_CLAUDE_ENV_FILE`，或 `humanize-flow config set claude.env_file <file>`。包含 token 的 env 文件应保持未跟踪。
+
+当你觉得运行像卡住时，先看 `humanize-flow status`。它会汇总最近 run/review 日志、Beads ready 队列、handoff 状态、内层 humanize/RLCR 痕迹、可疑阻塞信号和下一步建议。加 `--ai` 可以让 Codex 基于确定性状态快照，用说人话的方式解释当前状态。`--explain` 保留为别名。
+
 对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环。当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会在每个子任务前重新查询 `bd ready --json`，选择属于该 handoff 的下一个 ready 子任务，保留 Beads 的 ready 排序，而不是使用 handoff 的静态子任务顺序。子任务 review 通过后，CLI 会关闭该 Beads 任务，让依赖关系解锁下一个 ready 任务。每次 Codex review 只审当前已完成的子任务，不能因为同一 Epic 下的兄弟任务尚未完成而判失败。可用 `--max-round N` 覆盖每个子任务的修正轮数上限。
+
+YOLO 会把业务修正轮数和临时基础设施重试分开。`--max-round` 控制一个任务最多进行多少轮 Claude 修正 + Codex review；`--retry N` 和 `--retry-delay SECONDS` 控制 Claude provider、Codex review、`bd ready`、关闭 Beads 任务等阶段失败时的重试。网络或服务商瞬断不会消耗修正轮数；如果重试耗尽，CLI 会打印一条可复制的 `humanize-flow run ... --yolo` 命令，方便稍后继续同一个 handoff。
+
+YOLO 不会替代人工验证。Codex 返回 `pass` 后，先按 review 报告里的 `Human verification guide` 完成人工测试，然后运行 `humanize-flow verify <bd-id>` 记录这道人工门禁已经完成。如果没有 review artifact，`verify` 也会记录一份独立的人工确认。`commit`、`push`、`pr` 和 release 这类交付动作应在这个显式确认之后执行。
 
 Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，并要求 WHY/context 优先于 HOW/WHAT；它会把通过 review 中的 `Human verification guide` 纳入 PR，作为 reviewer 可参考的验证上下文，把草稿保存在 `.humanize-flow/runs/`，在多个 remote 时让你选择 GitHub 仓库，然后用 `gh pr create --repo` 创建 PR。
 
@@ -126,7 +136,9 @@ humanize-flow plan --slug undo-redo --from examples/minimal-feature-request.md
 humanize-flow plan-from-bd bd-1234 --slug undo-redo
 ```
 
-面向人类的生成产物默认使用英文。可以用 `humanize-flow i18n zh` 把完整链路切换到简体中文，包括 `bd-plan.md` 在内的规划文档、handoff prose、实际创建到 Beads 的 epic/task 标题、描述、验收标准、实现总结、review 报告、PR 文本和 commit message 正文。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+面向人类的生成产物默认使用英文。可以用 `humanize-flow i18n zh` 把完整链路切换到简体中文，包括 `jira-requirement.md` 和 `bd-plan.md` 在内的规划文档、handoff prose、实际创建到 Beads 的 epic/task 标题、描述、验收标准、实现总结、review 报告、PR 文本和 commit message 正文。机器可读的 JSON 字段名、枚举值、label、路径、命令、API 名称、Beads ID 和代码标识符保持原始形式。
+
+`jira-requirement.md` 是一份 Jira 风格 Markdown 需求，适合贴到内部协作系统里。它会优先说明 WHY/context，让主体内容对非工程协作者也易懂；如果需求偏技术，会把硬核技术细节单独放到技术说明部分。
 
 Beads 任务可以保持简洁，便于队列浏览。真正的执行契约不是简短的 Beads 文本本身：Claude Code worker prompt 要求读取已批准 handoff、`plan.md` 和 `acceptance.md`，Codex review 在这些产物缺失时会返回 blocked。
 

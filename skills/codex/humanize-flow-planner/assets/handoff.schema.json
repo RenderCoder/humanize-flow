@@ -115,6 +115,9 @@
         "request": {
           "type": "string"
         },
+        "jira_requirement": {
+          "type": "string"
+        },
         "plan": {
           "type": "string"
         },
