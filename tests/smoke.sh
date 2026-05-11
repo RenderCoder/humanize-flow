@@ -27,6 +27,11 @@ cat > "$TMP/fake-bin/bd" <<'BD'
 set -euo pipefail
 case "${1:-}" in
   show)
+    id="${2:-bd-1234}"
+    if [ -n "${BD_READY_DYNAMIC_STATE:-}" ] && grep -qx "$id" "$BD_READY_DYNAMIC_STATE" 2>/dev/null; then
+      printf '[{"id":"%s","title":"Recovered closed task","status":"closed","closed_at":"2026-05-11T00:00:00Z"}]\n' "$id"
+      exit 0
+    fi
     cat <<'JSON'
 {
   "id": "bd-1234",
@@ -163,6 +168,18 @@ case "$*" in
     printf 'Humanize-Flow-Verdict: changes_requested\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
     ;;
   *"running the Humanize Flow reviewer for this repository"*)
+    case "$*" in
+      *'Review the full approved handoff scope for `epic-yolo`'*)
+        if [ -n "${CODEX_REVIEW_COUNT:-}" ]; then
+          count=0
+          if [ -f "$CODEX_REVIEW_COUNT" ]; then count="$(cat "$CODEX_REVIEW_COUNT")"; fi
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$CODEX_REVIEW_COUNT"
+        fi
+        printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review: bd-epic\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO final review passed.\n\n## Human verification guide\n\n- [ ] Run full Epic smoke checks.\n'
+        exit 0
+        ;;
+    esac
     if [ -n "${CODEX_REVIEW_COUNT:-}" ]; then
       count=0
       if [ -f "$CODEX_REVIEW_COUNT" ]; then count="$(cat "$CODEX_REVIEW_COUNT")"; fi
@@ -587,6 +604,25 @@ PY
   grep -qx 'bd-epic.2' "$TMP/bd-close-args.txt"
   test "$(sed -n '1p' "$TMP/bd-close-args.txt")" = "bd-epic.2"
   test "$(sed -n '2p' "$TMP/bd-close-args.txt")" = "bd-epic.1"
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
+  : > "$TMP/bd-ready-dynamic-state.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-final.stdout"
+  test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -q 'review strategy: final full-scope review after all child tasks' "$TMP/epic-yolo-final.stdout"
+  grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-final.stdout"
+  grep -q 'Review the full approved handoff scope for `epic-yolo`' "$TMP/codex-epic-yolo-final-review-args.txt"
+  grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-final-args.txt"
+  grep -qx 'bd-epic.1' "$TMP/bd-close-args.txt"
+  grep -qx 'bd-epic.2' "$TMP/bd-close-args.txt"
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
+  printf 'bd-epic.2\nbd-epic.1\n' > "$TMP/bd-ready-dynamic-state.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-resume-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-resume-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-resume.stdout"
+  test ! -f "$TMP/yolo-claude-count.txt"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -q 'completed child tasks recovered from Beads: 2/2' "$TMP/epic-yolo-resume.stdout"
+  grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-resume.stdout"
+  test ! -f "$TMP/bd-close-args.txt"
   git checkout -qb feature/pr-smoke
   printf 'pr\n' > pr-change.txt
   git add pr-change.txt

@@ -111,6 +111,7 @@ humanize-flow run <bd-id>
 humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 humanize-flow run <bd-id> --yolo --retry 5 --retry-delay 20
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end
 humanize-flow run <bd-id> --interactive
 humanize-flow run <bd-id> --model claude-sonnet-4-6
 humanize-flow run <bd-id> --humanize-mode auto
@@ -132,11 +133,13 @@ Claude provider 环境文件是显式启用的。默认情况下，`run` 使用 
 
 `--yolo` 会针对已批准的 Humanize Flow handoff 启动 Claude+Codex 闭环。它会强制 Claude Code 权限模式为 `bypassPermissions`，强制 `--humanize-mode off` 以避免嵌套 humanize/RLCR review 循环，用 yolo 模式运行 Codex review，解析 review verdict，并把最新 review 作为下一轮 Claude 修正目标，直到 verdict 为 `pass` 或达到 `--max-round`。默认每个目标任务最多 3 轮。
 
+`--review-at-end` 会改变 Epic/handoff YOLO 的 review 调度方式。开启后，CLI 不再在每个子任务完成后立即 review，而是先实现所有 ready 的 handoff 子任务，并把每个子任务以“已实现，等待最终 review”的 reason 关闭，让 Beads 依赖继续解锁；全部子任务完成后，再针对 handoff slug 或 Epic ID 运行一次全局 Codex review。如果最终 review 返回 `changes_requested` 或 `blocked`，CLI 会让 Claude 做全局修正，再重新全局 review，直到 `pass` 或达到 `--max-round`。`--final-review-only` 是同义别名。它适合 per-child review 太慢、太容易陷入细节，或者你希望 Codex 从整个 Epic 角度验收的场景。代价是问题会更晚暴露：下游子任务可能会基于尚未被 Codex review 的子任务结果继续实现。
+
 `--max-round` 只计算业务修正轮数：一轮 Claude worker 加一轮 Codex review。临时命令失败由 `--retry` 和 `--retry-delay` 处理。YOLO 会在放弃前重试 Claude provider 调用、Codex review 调用、`bd ready` 和关闭 Beads 任务等阶段；这些重试不会消耗修正轮数。如果重试耗尽，错误信息会包含一条可复制的 `humanize-flow run ... --yolo` 命令，方便网络或服务商恢复后继续。
 
 YOLO 只自动化实现和 Codex review，不会自动完成人工验证门禁。review `pass` 后，应先按报告里的 `Human verification guide` 完成人工测试，然后运行 `humanize-flow verify <bd-id>`，再执行 `commit`、`push`、`pr` 或 release 这类交付命令。
 
-当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会把 handoff 当作 Epic 队列处理。每个子任务开始前，它都会重新查询 `bd ready --json`，把 ready 集合和 handoff 中剩余子任务求交集，并按 Beads ready 顺序选择下一个 ready 子任务。handoff 只限制允许执行的子任务集合，不施加静态执行顺序；尚未 ready 的子任务会等 Beads 依赖解锁后再执行。子任务 review 通过后，CLI 会关闭该 Beads 任务，并在 reason 中记录通过的 review artifact 路径，让下游依赖可以变为 ready。每个子任务都有自己的 Claude 修正循环和 Codex review。生成的 review prompt 会把 Codex 约束在当前子任务范围内，因此同一个 Epic 下尚未完成的兄弟任务不能作为当前子任务 review 失败的理由。需要完整 Epic 验收时，再显式运行 `humanize-flow review <epic-id-or-slug>`。
+当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会把 handoff 当作 Epic 队列处理。启动时，它会读取 handoff 子任务，并从已经关闭的 Beads 子任务恢复进度，所以中断后重试不会丢失已完成子任务计数。每个剩余子任务开始前，它都会重新查询 `bd ready --json`，把 ready 集合和 handoff 中剩余子任务求交集，并按 Beads ready 顺序选择下一个 ready 子任务。handoff 只限制允许执行的子任务集合，不施加静态执行顺序；尚未 ready 的子任务会等 Beads 依赖解锁后再执行。默认情况下，子任务 review 通过后，CLI 会关闭该 Beads 任务，并在 reason 中记录通过的 review artifact 路径，让下游依赖可以变为 ready。每个子任务都有自己的 Claude 修正循环和 Codex review。生成的 review prompt 会把 Codex 约束在当前子任务范围内，因此同一个 Epic 下尚未完成的兄弟任务不能作为当前子任务 review 失败的理由。如果更希望做一次最终完整 Epic 验收，而不是每个子任务都 review，使用 `--review-at-end`。
 
 使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 

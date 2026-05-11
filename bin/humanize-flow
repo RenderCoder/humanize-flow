@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.5"
+HF_VERSION="0.5.6"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -1582,6 +1582,58 @@ for task in (data.get('bd') or {}).get('tasks') or []:
 PY
 }
 
+yolo_completed_child_task_ids() {
+  local slug
+  slug="$1"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can query child task status."
+  python3 - "$(handoff_path "$slug")" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+task_ids = [
+    task.get('bd_id')
+    for task in (data.get('bd') or {}).get('tasks') or []
+    if isinstance(task, dict) and task.get('bd_id')
+]
+closed_statuses = {'closed', 'done', 'complete', 'completed', 'resolved'}
+
+for task_id in task_ids:
+    result = subprocess.run(
+        ['bd', 'show', task_id, '--json'],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(1)
+    try:
+        raw = json.loads(result.stdout)
+    except Exception:
+        raise SystemExit(1)
+    if isinstance(raw, list):
+        item = next((entry for entry in raw if isinstance(entry, dict) and entry.get('id') == task_id), None)
+        if item is None and raw and isinstance(raw[0], dict):
+            item = raw[0]
+    elif isinstance(raw, dict):
+        item = raw
+    else:
+        item = None
+    if not isinstance(item, dict):
+        continue
+    status = str(item.get('status') or '').lower()
+    if status in closed_statuses or item.get('closed_at'):
+        print(task_id)
+PY
+}
+
 yolo_ref_is_epic_scope() {
   local ref slug
   ref="$1"; slug="$2"
@@ -1668,6 +1720,16 @@ yolo_mark_child_complete() {
   fi
   if ! bd close "$task_id" --reason "$reason" >/dev/null; then
     die "YOLO Epic mode could not close completed Beads task: $task_id"
+  fi
+}
+
+yolo_mark_child_implemented() {
+  local task_id reason
+  task_id="$1"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can advance implemented child tasks."
+  reason="Humanize Flow YOLO final-review mode completed implementation; final Epic review pending"
+  if ! bd close "$task_id" --reason "$reason" >/dev/null; then
+    die "YOLO Epic final-review mode could not close implemented Beads task: $task_id"
   fi
 }
 
@@ -1844,9 +1906,13 @@ latest_verification_for_slug() {
 }
 
 yolo_retry_hint() {
-  local ref max_round retry retry_delay
-  ref="$1"; max_round="$2"; retry="$3"; retry_delay="$4"
-  printf 'humanize-flow run %s --yolo --max-round %s --retry %s --retry-delay %s\n' "$ref" "$max_round" "$retry" "$retry_delay"
+  local ref max_round retry retry_delay review_strategy
+  ref="$1"; max_round="$2"; retry="$3"; retry_delay="$4"; review_strategy="${5:-each-task}"
+  printf 'humanize-flow run %s --yolo' "$ref"
+  if [ "$review_strategy" = "final" ]; then
+    printf ' --review-at-end'
+  fi
+  printf ' --max-round %s --retry %s --retry-delay %s\n' "$max_round" "$retry" "$retry_delay"
 }
 
 yolo_phase_with_retries() {
@@ -2014,11 +2080,15 @@ EOF
 
 cmd_run_yolo() {
   require_git_repo
-  local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay slug
+  local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay review_strategy slug
   local epic_scope child_ids target_ids target_count completed_csv completed_count
   local target_index target_id ready_ids round latest_review verdict hint
-  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"
+  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"; review_strategy="${12:-each-task}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
+  case "$review_strategy" in
+    each-task|final) ;;
+    *) die "Unsupported YOLO review strategy: $review_strategy" ;;
+  esac
   case "$max_round" in
     ''|*[!0-9]*) die "--max-round must be a positive integer." ;;
   esac
@@ -2054,13 +2124,25 @@ cmd_run_yolo() {
     info "target count: $target_count"
   fi
   info "max rounds: $max_round"
+  if [ "$review_strategy" = "final" ]; then
+    info "review strategy: final full-scope review after all child tasks"
+  else
+    info "review strategy: review each completed task"
+  fi
   info "phase retry: $retry attempt(s), ${retry_delay}s delay"
   info "humanize mode: off (forced by --yolo to avoid nested review loops)"
   info "human verification gate: YOLO automates Claude work and Codex review only; after a pass review, run humanize-flow verify <task-id> after manual testing before commit/push/pr."
-  hint="$(yolo_retry_hint "$ref" "$max_round" "$retry" "$retry_delay")"
+  hint="$(yolo_retry_hint "$ref" "$max_round" "$retry" "$retry_delay" "$review_strategy")"
   completed_csv=""
   completed_count=0
   if [ "$epic_scope" -eq 1 ]; then
+    if ! completed_csv="$(yolo_phase_with_retries "$retry" "$retry_delay" "query completed child tasks" "$slug" yolo_completed_child_task_ids "$slug" | paste -sd, -)"; then
+      die "YOLO Epic mode failed while querying completed child task status for handoff: $slug. Retry later with: $hint"
+    fi
+    if [ -n "$completed_csv" ]; then
+      completed_count="$(printf '%s\n' "$completed_csv" | tr ',' '\n' | sed '/^$/d' | wc -l | tr -d ' ')"
+      info "completed child tasks recovered from Beads: $completed_count/$target_count"
+    fi
     while [ "$completed_count" -lt "$target_count" ]; do
       if ! ready_ids="$(yolo_phase_with_retries "$retry" "$retry_delay" "query bd ready" "$slug" yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
         die "YOLO Epic mode failed while querying ready child tasks for handoff: $slug. Retry later with: $hint"
@@ -2071,6 +2153,19 @@ cmd_run_yolo() {
       fi
       target_index=$((completed_count + 1))
       info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
+      if [ "$review_strategy" = "final" ]; then
+        info "YOLO target $target_index/$target_count: Claude Code worker"
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+          die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+        fi
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "close implemented Beads task" "$target_id" yolo_mark_child_implemented "$target_id"; then
+          die "YOLO could not close implemented Beads task $target_id in final-review mode. Retry later with: $hint"
+        fi
+        info "YOLO marked Beads task implemented pending final review: $target_id"
+        completed_csv="${completed_csv:+$completed_csv,}$target_id"
+        completed_count=$((completed_count + 1))
+        continue
+      fi
       if latest_review="$(yolo_latest_pass_review "$slug" "$target_id" 2>/dev/null || true)" && [ -n "$latest_review" ]; then
         info "YOLO target $target_id already has a passing review; marking complete without rerunning: $(repo_relative_path "$latest_review")"
         if ! yolo_phase_with_retries "$retry" "$retry_delay" "close Beads task" "$target_id" yolo_mark_child_complete "$target_id" "$latest_review"; then
@@ -2119,6 +2214,39 @@ cmd_run_yolo() {
       completed_csv="${completed_csv:+$completed_csv,}$target_id"
       completed_count=$((completed_count + 1))
     done
+    if [ "$review_strategy" = "final" ]; then
+      round=1
+      while [ "$round" -le "$max_round" ]; do
+        info "YOLO final review round $round/$max_round: Codex full handoff/Epic scope"
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex final review" "$ref" cmd_review "$ref" --yolo; then
+          die "YOLO final Codex review failed for $ref. Network or provider issues do not consume a correction round. Retry later with: $hint"
+        fi
+        latest_review="$(latest_review_for_slug "$slug" "$ref" 2>/dev/null || true)"
+        [ -n "$latest_review" ] || die "YOLO final review did not produce a non-empty review artifact for $ref"
+        verdict="$(review_verdict "$latest_review" 2>/dev/null || true)"
+        [ -n "$verdict" ] || die "YOLO final review did not produce a parseable verdict for $ref. Latest review: $latest_review"
+        info "YOLO final review verdict for $ref: $verdict"
+        case "$verdict" in
+          pass)
+            info "YOLO mode completed all target(s); final full-scope review passed."
+            return 0
+            ;;
+          changes_requested|blocked)
+            if [ "$round" -ge "$max_round" ]; then
+              die "YOLO final-review mode reached max rounds ($max_round) for $ref without a passing final review. Latest review: $latest_review"
+            fi
+            info "YOLO mode will run a full-scope correction round using latest final review: $(repo_relative_path "$latest_review")"
+            if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code final correction" "$ref" cmd_run_once "$ref" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+              die "YOLO final correction failed for $ref. Network or provider issues do not consume a correction round. Retry later with: $hint"
+            fi
+            ;;
+          *)
+            die "YOLO mode could not parse a supported final verdict for $ref. Latest verdict: $verdict. Latest review: $latest_review"
+            ;;
+        esac
+        round=$((round + 1))
+      done
+    fi
     info "YOLO mode completed all target(s)."
     return 0
   fi
@@ -2170,11 +2298,11 @@ cmd_run_yolo() {
 
 cmd_run() {
   require_git_repo
-  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay review_strategy
   ref=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
   humanize_mode="$(claude_humanize_default)"
   claude_env_file="$(claude_env_file_default)"
-  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3; retry=3; retry_delay=10
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3; retry=3; retry_delay=10; review_strategy="each-task"
   while [ $# -gt 0 ]; do
     case "$1" in
       --interactive|-i) mode="interactive" ;;
@@ -2186,6 +2314,8 @@ cmd_run() {
       --env-file|--claude-env-file) shift; claude_env_file="${1:-}" ;;
       --no-env-file) claude_env_file="" ;;
       --yolo) yolo=1; permission_mode="bypassPermissions"; humanize_mode="off" ;;
+      --review-at-end|--final-review-only) review_strategy="final" ;;
+      --review-each-task) review_strategy="each-task" ;;
       --max-round) shift; max_round="${1:-}" ;;
       --retry) shift; retry="${1:-}" ;;
       --retry-delay) shift; retry_delay="${1:-}" ;;
@@ -2211,6 +2341,9 @@ Options:
   --env-file FILE            Load Claude Code provider/auth env vars from FILE for this run.
   --no-env-file              Ignore configured HUMANIZE_FLOW_CLAUDE_ENV_FILE / claude.env_file.
   --yolo                     Run Claude+Codex review loop until pass or max rounds. Forces --humanize-mode off.
+  --review-at-end            With --yolo Epic/handoff runs, skip per-child reviews and run one final full-scope review.
+  --final-review-only        Alias for --review-at-end.
+  --review-each-task         With --yolo, review each completed task. This is the default.
   --max-round N              Maximum YOLO correction rounds. Default: 3.
   --retry N                  YOLO phase retry attempts for transient command failures. Default: 3.
   --retry-delay SECONDS      Delay between YOLO phase retries. Default: 10.
@@ -2233,9 +2366,12 @@ EOF
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
   humanize_mode="$(normalize_humanize_mode "$humanize_mode")" || die "Unsupported Claude humanize mode: $humanize_mode (supported: required, auto, off)"
   claude_env_file="$(normalize_claude_env_file_value "$claude_env_file")"
+  if [ "$review_strategy" = "final" ] && [ "$yolo" -ne 1 ]; then
+    die "--review-at-end requires --yolo."
+  fi
   if [ "$yolo" -eq 1 ]; then
     [ "$mode" != "interactive" ] || die "YOLO mode does not support --interactive."
-    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file" "$retry" "$retry_delay"
+    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file" "$retry" "$retry_delay" "$review_strategy"
   else
     cmd_run_once "$ref" "$mode" "$model" "$permission_mode" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file"
   fi

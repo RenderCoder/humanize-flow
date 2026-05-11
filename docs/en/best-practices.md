@@ -41,12 +41,22 @@ Use YOLO for trusted worktrees where you want the CLI to keep moving through imp
 humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
 ```
 
+For large cohesive Epics, you can trade early per-child review for one final full-scope review:
+
+```bash
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
+```
+
 YOLO is best for:
 
 - well-scoped handoffs with clear acceptance criteria,
 - task queues already represented in Beads dependencies,
 - trusted repositories where high automation is acceptable,
 - long-running work where transient provider or network failures should retry automatically.
+
+Prefer the default per-child review when early defect detection matters, child tasks are risky, or downstream tasks should not build on unreviewed output. Prefer `--review-at-end` when the Epic is cohesive, intermediate reviews are mostly noise, or you need Codex to judge cross-task behavior from the final integrated diff. In final-review mode, `--max-round` applies to the final full-scope review/correction loop after all child tasks are implemented.
+
+If a YOLO Epic run is interrupted, rerun the same command. Humanize Flow restores completed-child progress from Beads closed tasks before selecting the next ready child, so a retry should continue instead of starting the Epic queue over.
 
 YOLO is not a substitute for final human verification. After a passing review, complete the review report's `Human verification guide` and record it:
 

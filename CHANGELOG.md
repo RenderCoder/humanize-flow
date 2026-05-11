@@ -6,6 +6,16 @@ All notable changes to humanize-flow will be documented in this file.
 
 No unreleased changes yet.
 
+## [0.5.6] - 2026-05-11
+
+### Added
+
+- Add `humanize-flow run --yolo --review-at-end` / `--final-review-only` so Epic YOLO can skip per-child Codex reviews, implement all ready handoff children first, then run one final full-scope review/correction loop.
+
+### Fixed
+
+- Restore Epic YOLO progress from already closed Beads child tasks before selecting the next ready child, so interrupted or resumed runs do not stop with a misleading "no ready remaining child tasks" error.
+
 ## [0.5.5] - 2026-05-11
 
 ### Fixed

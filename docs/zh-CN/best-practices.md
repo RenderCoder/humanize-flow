@@ -41,12 +41,22 @@ humanize-flow run <bd-id>
 humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
 ```
 
+对于内聚度高的大 Epic，也可以用一次最终全局 review 换取更少的中间等待：
+
+```bash
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
+```
+
 YOLO 适合：
 
 - handoff 范围明确、验收标准清楚；
 - 子任务依赖已经用 Beads 表达；
 - 仓库可信，可以接受高自动化权限；
 - 任务运行时间较长，希望网络或服务商瞬断能自动重试。
+
+如果更看重早发现问题、子任务风险较高，或者不希望下游任务基于未 review 的结果继续开发，保留默认 per-child review。如果 Epic 内聚度高、中间 review 大多是噪音，或者希望 Codex 从最终集成 diff 和跨任务行为角度判断，就使用 `--review-at-end`。在最终 review 模式下，`--max-round` 作用于所有子任务实现完成后的全局 review/correction 循环。
+
+如果 YOLO Epic 运行中断，重新执行同一条命令即可。Humanize Flow 会先从 Beads 已关闭子任务恢复完成进度，再选择下一个 ready 子任务，所以重试应继续推进，而不是从 Epic 队列开头重来。
 
 YOLO 不能替代最终人工验证。review 通过后，先完成报告里的 `Human verification guide`，再记录人工验证：
 

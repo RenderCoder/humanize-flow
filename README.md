@@ -100,9 +100,10 @@ Use YOLO for trusted worktrees when you want Humanize Flow to keep running Claud
 
 ```bash
 humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
 ```
 
-YOLO forces `--humanize-mode off` to avoid nested review loops, re-queries Beads ready state before each Epic child task, scopes each review to the completed child task, and separates infrastructure retries from business correction rounds. It still stops at the human verification gate: after a `pass` review, complete the report's `Human verification guide` and run `humanize-flow verify <bd-id>` before `commit`, `push`, or `pr`.
+YOLO forces `--humanize-mode off` to avoid nested review loops, re-queries Beads ready state before each Epic child task, restores progress from already closed Beads child tasks when resuming, scopes each default review to the completed child task, and separates infrastructure retries from business correction rounds. Add `--review-at-end` when you want Epic YOLO to skip per-child Codex reviews and run one final full-scope review/correction loop after all child tasks are implemented. This is faster and gives Codex a global view, but defects are caught later. YOLO still stops at the human verification gate: after a `pass` review, complete the report's `Human verification guide` and run `humanize-flow verify <bd-id>` before `commit`, `push`, or `pr`.
 
 When a run looks stuck, start with:
 

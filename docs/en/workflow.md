@@ -127,9 +127,12 @@ For approved handoffs, YOLO mode can run the implementation and review loop auto
 ```bash
 humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end
 ```
 
-YOLO mode forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested review loops, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds per target task. If you pass a handoff slug or Beads Epic ID, YOLO re-queries `bd ready --json` before each child task, chooses the next ready child that belongs to the handoff in Beads' ready order, closes each child after a passing review so dependencies can unblock, and scopes each Codex review to the completed child task, not the whole Epic. The handoff limits scope but does not impose a static child-task order.
+YOLO mode forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested review loops, forces Codex review yolo mode, and repeats Claude correction plus Codex review until the review verdict is `pass` or the maximum round count is reached. The default maximum is 3 rounds per target task. If you pass a handoff slug or Beads Epic ID, YOLO re-queries `bd ready --json` before each child task, chooses the next ready child that belongs to the handoff in Beads' ready order, closes each child after a passing review so dependencies can unblock, and scopes each default Codex review to the completed child task, not the whole Epic. The handoff limits scope but does not impose a static child-task order.
+
+Use `--review-at-end` when per-child review overhead is too high or you want Codex to evaluate the full Epic only after all child tasks are implemented. In that mode, child tasks are closed as implemented with final review pending, then one full-scope final review/correction loop runs against the handoff slug or Epic ID. On retry, YOLO restores progress from already closed Beads child tasks before querying the next ready child. This is faster and more global, but it delays defect detection until the end.
 
 ## 5. Review with Codex
 
