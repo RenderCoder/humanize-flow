@@ -103,7 +103,7 @@ humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --ret
 humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
 ```
 
-YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环；每个 Epic 子任务开始前都会重新查询 Beads ready 状态；恢复运行时会从已经关闭的 Beads 子任务恢复进度；默认每次 review 只审当前完成的子任务；并把基础设施重试和业务修正轮数分开。如果希望 Epic YOLO 跳过每个子任务的 Codex review，只在所有子任务实现后做一次全局 review/correction 循环，可以加 `--review-at-end`。这种方式更快，也让 Codex 站在整体视角验收，但问题会更晚才暴露。YOLO 仍然会停在人工验证门禁：review `pass` 后，先完成报告里的 `Human verification guide`，再运行 `humanize-flow verify <bd-id>`，之后才执行 `commit`、`push` 或 `pr`。
+YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环；恢复运行时会从已经关闭的 Beads 子任务恢复进度，并优先继续已标记为 `in_progress` 的 handoff 子任务；每个剩余 Epic 子任务开始前都会重新查询 Beads ready 状态；默认每次 review 只审当前完成的子任务；并把基础设施重试和业务修正轮数分开。如果希望 Epic YOLO 跳过每个子任务的 Codex review，只在所有子任务实现后做一次全局 review/correction 循环，可以加 `--review-at-end`。这种方式更快，也让 Codex 站在整体视角验收，但问题会更晚才暴露。YOLO 仍然会停在人工验证门禁：review `pass` 后，先完成报告里的 `Human verification guide`，再运行 `humanize-flow verify <bd-id>`，之后才执行 `commit`、`push` 或 `pr`。
 
 当你怀疑流程卡住时，先运行：
 

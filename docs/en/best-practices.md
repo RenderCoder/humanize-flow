@@ -56,7 +56,7 @@ YOLO is best for:
 
 Prefer the default per-child review when early defect detection matters, child tasks are risky, or downstream tasks should not build on unreviewed output. Prefer `--review-at-end` when the Epic is cohesive, intermediate reviews are mostly noise, or you need Codex to judge cross-task behavior from the final integrated diff. In final-review mode, `--max-round` applies to the final full-scope review/correction loop after all child tasks are implemented.
 
-If a YOLO Epic run is interrupted, rerun the same command. Humanize Flow restores completed-child progress from Beads closed tasks before selecting the next ready child, so a retry should continue instead of starting the Epic queue over.
+If a YOLO Epic run is interrupted, rerun the same command. Humanize Flow restores completed-child progress from Beads closed tasks and continues handoff children already marked `in_progress` before selecting the next ready child, so a retry should continue instead of starting the Epic queue over or stalling because the active child no longer appears in `bd ready`.
 
 YOLO is not a substitute for final human verification. After a passing review, complete the review report's `Human verification guide` and record it:
 

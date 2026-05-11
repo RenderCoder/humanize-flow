@@ -132,7 +132,7 @@ humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end
 
 YOLO 模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 `--humanize-mode off` 以避免嵌套 review 循环，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review verdict 为 `pass` 或达到最大轮数。默认每个目标任务最多 3 轮。如果传入 handoff slug 或 Beads Epic ID，YOLO 会在每个子任务前重新查询 `bd ready --json`，按 Beads ready 顺序选择属于该 handoff 的下一个 ready 子任务；子任务 review 通过后会关闭该 Beads 任务，让依赖关系解锁；默认每次 Codex review 只审刚完成的子任务，而不是审整个 Epic。handoff 只限制范围，不施加静态子任务顺序。
 
-当 per-child review 成本太高，或者你希望 Codex 在所有子任务实现后从完整 Epic 角度验收时，可以加 `--review-at-end`。该模式会把子任务以“已实现，等待最终 review”的 reason 关闭，然后针对 handoff slug 或 Epic ID 运行一次全局 final review/correction 循环。重试时，YOLO 会先从已经关闭的 Beads 子任务恢复进度，再查询下一个 ready 子任务。它更快、视角更整体，但问题会延迟到最后才暴露。
+当 per-child review 成本太高，或者你希望 Codex 在所有子任务实现后从完整 Epic 角度验收时，可以加 `--review-at-end`。该模式会把子任务以“已实现，等待最终 review”的 reason 关闭，然后针对 handoff slug 或 Epic ID 运行一次全局 final review/correction 循环。重试时，YOLO 会先从已经关闭的 Beads 子任务恢复进度，并继续已标记为 `in_progress` 的 handoff 子任务，再查询下一个 ready 子任务。它更快、视角更整体，但问题会延迟到最后才暴露。
 
 ## 5. 用 Codex 审查
 

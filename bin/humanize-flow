@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.6"
+HF_VERSION="0.5.7"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -1634,6 +1634,61 @@ for task_id in task_ids:
 PY
 }
 
+yolo_in_progress_child_task_ids() {
+  local slug completed_csv
+  slug="$1"; completed_csv="${2:-}"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can query child task status."
+  python3 - "$(handoff_path "$slug")" "$completed_csv" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+completed = {item for item in sys.argv[2].split(',') if item}
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+task_ids = [
+    task.get('bd_id')
+    for task in (data.get('bd') or {}).get('tasks') or []
+    if isinstance(task, dict) and task.get('bd_id')
+]
+active_statuses = {'in_progress', 'in-progress', 'active', 'started', 'doing', 'wip'}
+
+for task_id in task_ids:
+    if task_id in completed:
+        continue
+    result = subprocess.run(
+        ['bd', 'show', task_id, '--json'],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(1)
+    try:
+        raw = json.loads(result.stdout)
+    except Exception:
+        raise SystemExit(1)
+    if isinstance(raw, list):
+        item = next((entry for entry in raw if isinstance(entry, dict) and entry.get('id') == task_id), None)
+        if item is None and raw and isinstance(raw[0], dict):
+            item = raw[0]
+    elif isinstance(raw, dict):
+        item = raw
+    else:
+        item = None
+    if not isinstance(item, dict):
+        continue
+    status = str(item.get('status') or '').lower()
+    if status in active_statuses:
+        print(task_id)
+PY
+}
+
 yolo_ref_is_epic_scope() {
   local ref slug
   ref="$1"; slug="$2"
@@ -2082,7 +2137,7 @@ cmd_run_yolo() {
   require_git_repo
   local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay review_strategy slug
   local epic_scope child_ids target_ids target_count completed_csv completed_count
-  local target_index target_id ready_ids round latest_review verdict hint
+  local target_index target_id ready_ids active_ids round latest_review verdict hint
   ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"; review_strategy="${12:-each-task}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
   case "$review_strategy" in
@@ -2144,15 +2199,25 @@ cmd_run_yolo() {
       info "completed child tasks recovered from Beads: $completed_count/$target_count"
     fi
     while [ "$completed_count" -lt "$target_count" ]; do
-      if ! ready_ids="$(yolo_phase_with_retries "$retry" "$retry_delay" "query bd ready" "$slug" yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
+      if ! active_ids="$(yolo_phase_with_retries "$retry" "$retry_delay" "query in-progress child tasks" "$slug" yolo_in_progress_child_task_ids "$slug" "$completed_csv")"; then
+        die "YOLO Epic mode failed while querying in-progress child task status for handoff: $slug. Retry later with: $hint"
+      fi
+      target_id="$(printf '%s\n' "$active_ids" | sed '/^$/d' | head -n 1)"
+      if [ -n "$target_id" ]; then
+        info "YOLO target $((completed_count + 1))/$target_count selected from in-progress handoff child: $target_id"
+      elif ! ready_ids="$(yolo_phase_with_retries "$retry" "$retry_delay" "query bd ready" "$slug" yolo_ready_child_task_ids "$slug" "$completed_csv")"; then
         die "YOLO Epic mode failed while querying ready child tasks for handoff: $slug. Retry later with: $hint"
       fi
-      target_id="$(printf '%s\n' "$ready_ids" | sed '/^$/d' | head -n 1)"
+      if [ -z "$target_id" ]; then
+        target_id="$(printf '%s\n' "$ready_ids" | sed '/^$/d' | head -n 1)"
+      fi
       if [ -z "$target_id" ]; then
         die "YOLO Epic mode found no ready remaining child tasks for $slug. Completed $completed_count/$target_count. Check Beads dependency/status state with: bd ready --json"
       fi
       target_index=$((completed_count + 1))
-      info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
+      if [ -z "$active_ids" ]; then
+        info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
+      fi
       if [ "$review_strategy" = "final" ]; then
         info "YOLO target $target_index/$target_count: Claude Code worker"
         if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then

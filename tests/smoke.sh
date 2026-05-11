@@ -32,6 +32,10 @@ case "${1:-}" in
       printf '[{"id":"%s","title":"Recovered closed task","status":"closed","closed_at":"2026-05-11T00:00:00Z"}]\n' "$id"
       exit 0
     fi
+    if [ -n "${BD_IN_PROGRESS_STATE:-}" ] && grep -qx "$id" "$BD_IN_PROGRESS_STATE" 2>/dev/null; then
+      printf '[{"id":"%s","title":"Recovered in-progress task","status":"in_progress"}]\n' "$id"
+      exit 0
+    fi
     cat <<'JSON'
 {
   "id": "bd-1234",
@@ -44,6 +48,10 @@ case "${1:-}" in
 JSON
     ;;
   ready)
+    if [ -n "${BD_READY_EMPTY:-}" ]; then
+      printf '[]\n'
+      exit 0
+    fi
     if [ -n "${BD_READY_DYNAMIC_STATE:-}" ]; then
       if grep -qx 'bd-epic.2' "$BD_READY_DYNAMIC_STATE" 2>/dev/null; then
         cat <<'JSON'
@@ -623,6 +631,16 @@ PY
   grep -q 'completed child tasks recovered from Beads: 2/2' "$TMP/epic-yolo-resume.stdout"
   grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-resume.stdout"
   test ! -f "$TMP/bd-close-args.txt"
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
+  printf 'bd-epic.2\n' > "$TMP/bd-ready-dynamic-state.txt"
+  printf 'bd-epic.1\n' > "$TMP/bd-in-progress-state.txt"
+  BD_READY_EMPTY=1 BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_IN_PROGRESS_STATE="$TMP/bd-in-progress-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-active-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-active-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-active.stdout"
+  test "$(cat "$TMP/yolo-claude-count.txt")" = "1"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -q 'completed child tasks recovered from Beads: 1/2' "$TMP/epic-yolo-active.stdout"
+  grep -q 'selected from in-progress handoff child: bd-epic.1' "$TMP/epic-yolo-active.stdout"
+  grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-active-args.txt"
+  grep -qx 'bd-epic.1' "$TMP/bd-close-args.txt"
   git checkout -qb feature/pr-smoke
   printf 'pr\n' > pr-change.txt
   git add pr-change.txt

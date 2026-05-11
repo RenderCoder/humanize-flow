@@ -17,6 +17,9 @@ mkdir -p "$TMP/humanize-flow"
 (
   cd "$ROOT"
   git ls-files -z | while IFS= read -r -d '' path; do
+    case "$path" in
+      humanize-flow*.zip) continue ;;
+    esac
     if [ -f "$path" ]; then
       printf '%s\0' "$path"
     fi

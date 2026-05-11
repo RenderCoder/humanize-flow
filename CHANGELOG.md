@@ -6,6 +6,12 @@ All notable changes to humanize-flow will be documented in this file.
 
 No unreleased changes yet.
 
+## [0.5.7] - 2026-05-11
+
+### Fixed
+
+- Continue Epic YOLO handoff children already marked `in_progress` before falling back to `bd ready`, so resumed runs do not stall when Beads hides active child tasks from the ready queue.
+
 ## [0.5.6] - 2026-05-11
 
 ### Added
