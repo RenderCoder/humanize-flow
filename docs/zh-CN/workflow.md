@@ -90,6 +90,16 @@ humanize-flow approve <slug>
 
 ## 4. 用 Claude Code 实现
 
+批准后的日常推荐顺序：
+
+```bash
+humanize-flow run-next
+humanize-flow review <bd-id>
+humanize-flow verify <bd-id>
+```
+
+希望 Claude Code 使用默认 humanize/RLCR 实现路径时，用普通 `run`。只有在 handoff 范围清楚、worktree 可信，并且希望 Humanize Flow 接管完整 Claude + Codex review 闭环时，才使用 `run --yolo`。选择建议见 [最佳实践](best-practices.md)。
+
 执行下一个 ready 的 Humanize Flow 任务：
 
 ```bash
@@ -132,6 +142,14 @@ Reviewer 会对照批准的产物进行审查，并返回：
 - `pass`
 - `changes_requested`
 - `blocked`
+
+每份 review 报告还必须包含一行给程序解析的 ASCII verdict，例如：
+
+```text
+Humanize-Flow-Verdict: pass
+```
+
+这一行只能使用 `pass`、`changes_requested` 或 `blocked` 三个值之一。报告正文继续遵循用户配置的 i18n 语言，但这一行故意不翻译，保证 `run --yolo`、`status`、`verify` 和 PR 验证指南收集逻辑都能稳定解析结果。
 
 缺少 handoff、plan 或 acceptance 证据时应该返回 `blocked`，而不是 `pass`。
 

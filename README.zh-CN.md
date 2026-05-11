@@ -75,35 +75,50 @@ $humanize-flow-planner
 ```bash
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
-humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
-humanize-flow review-feedback <bd-id>
-humanize-flow status --ai
 humanize-flow verify <bd-id>
 humanize-flow commit
 humanize-flow push
 humanize-flow pr
 ```
 
-Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `bypassPermissions`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果设置了 `codex.model` 或 `codex.reasoning_effort`，则使用 Humanize Flow 配置值；review 和 review-feedback 默认使用 yolo 模式，也就是传给 Codex `--dangerously-bypass-approvals-and-sandbox`，可用 `review.yolo=false`、`HUMANIZE_FLOW_REVIEW_YOLO=false`、`--no-yolo`、`review.sandbox`、`HUMANIZE_FLOW_REVIEW_SANDBOX` 或 `--sandbox` 降低权限。需要让 Claude Code 回到 classifier gate 时，可用 `--permission-mode auto`、`HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto` 或 `humanize-flow config set claude.permission_mode auto` 降低权限。在 `required` 模式下，worker prompt 会要求 Claude 在改代码前基于已批准 plan 启动 humanize/RLCR；如果 humanize 不可用，可用 `--humanize-mode auto`、`--no-humanize`、`HUMANIZE_FLOW_CLAUDE_HUMANIZE` 或 `humanize-flow config set claude.humanize <mode>` 降低模式。CLI 会把原始 Claude `stream-json` 事件保存在 run 目录用于调试，但默认展示人类可读日志。如果希望在 Claude Code UI 中监督执行，可以运行：
+这是日常推荐路径：规划、批准、执行一个 ready 任务、review、完成人工验证，再交付。明确知道下一个任务时，优先使用实际 Beads ID：
+
+```bash
+humanize-flow run <bd-id>
+```
+
+希望 Humanize Flow 从 ready 队列中选择任务，并在存在多个分组时提示你选择时，用 `run-next`。
+
+Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `bypassPermissions`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果通过 `humanize-flow config` 设置了模型或 reasoning effort，则使用配置值。Review 和 review-feedback 默认使用 Codex yolo 模式，避免权限提示阻塞 review 循环。如果希望在 Claude Code UI 中监督执行，可以运行：
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
 
-Claude provider 覆盖是显式启用的。默认 worker 使用 Claude Code 自己的全局 provider/auth 配置。需要为某个项目测试第三方 Claude Code provider 时，可以使用 `humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env`、`HUMANIZE_FLOW_CLAUDE_ENV_FILE`，或 `humanize-flow config set claude.env_file <file>`。包含 token 的 env 文件应保持未跟踪。
+在可信 worktree 中，如果希望 Humanize Flow 自动推进 Claude 实现 + Codex review，使用 YOLO：
 
-当你觉得运行像卡住时，先看 `humanize-flow status`。它会汇总最近 run/review 日志、Beads ready 队列、handoff 状态、内层 humanize/RLCR 痕迹、可疑阻塞信号和下一步建议。加 `--ai` 可以让 Codex 基于确定性状态快照，用说人话的方式解释当前状态。`--explain` 保留为别名。
+```bash
+humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
+```
 
-对于已批准的 handoff，如果希望 CLI 自动闭环，可以运行 `humanize-flow run <bd-id> --yolo`。该模式会强制 Claude Code 权限模式为 `bypassPermissions`，强制 Codex review 使用 yolo 模式，并重复 Claude 修正 + Codex review，直到 review 通过或达到默认 3 轮上限。YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环。当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会在每个子任务前重新查询 `bd ready --json`，选择属于该 handoff 的下一个 ready 子任务，保留 Beads 的 ready 排序，而不是使用 handoff 的静态子任务顺序。子任务 review 通过后，CLI 会关闭该 Beads 任务，让依赖关系解锁下一个 ready 任务。每次 Codex review 只审当前已完成的子任务，不能因为同一 Epic 下的兄弟任务尚未完成而判失败。可用 `--max-round N` 覆盖每个子任务的修正轮数上限。
+YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环；每个 Epic 子任务开始前都会重新查询 Beads ready 状态；每次 review 只审当前完成的子任务；并把基础设施重试和业务修正轮数分开。它仍然会停在人工验证门禁：review `pass` 后，先完成报告里的 `Human verification guide`，再运行 `humanize-flow verify <bd-id>`，之后才执行 `commit`、`push` 或 `pr`。
 
-YOLO 会把业务修正轮数和临时基础设施重试分开。`--max-round` 控制一个任务最多进行多少轮 Claude 修正 + Codex review；`--retry N` 和 `--retry-delay SECONDS` 控制 Claude provider、Codex review、`bd ready`、关闭 Beads 任务等阶段失败时的重试。网络或服务商瞬断不会消耗修正轮数；如果重试耗尽，CLI 会打印一条可复制的 `humanize-flow run ... --yolo` 命令，方便稍后继续同一个 handoff。
+当你怀疑流程卡住时，先运行：
 
-YOLO 不会替代人工验证。Codex 返回 `pass` 后，先按 review 报告里的 `Human verification guide` 完成人工测试，然后运行 `humanize-flow verify <bd-id>` 记录这道人工门禁已经完成。如果没有 review artifact，`verify` 也会记录一份独立的人工确认。`commit`、`push`、`pr` 和 release 这类交付动作应在这个显式确认之后执行。
+```bash
+humanize-flow status --ai
+```
 
-Review 通过后，`humanize-flow commit` 每次都会让 Codex 从完整 working tree 判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考，所以 Codex 可以纳入应该一起提交的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，起草 Lore commit message，并在确认后只提交这些被选中的路径。`humanize-flow push` 会推送当前分支；如果有多个 remote，会先让你选择。`humanize-flow pr` 会让 Codex 按当前工作流语言起草详细、专业的 GitHub PR 标题和正文，并要求 WHY/context 优先于 HOW/WHAT；它会把通过 review 中的 `Human verification guide` 纳入 PR，作为 reviewer 可参考的验证上下文，把草稿保存在 `.humanize-flow/runs/`，在多个 remote 时让你选择 GitHub 仓库，然后用 `gh pr create --repo` 创建 PR。
+它会把确定性状态快照和 Codex 的人话解释结合起来，告诉你当前是运行中、阻塞、已完成，还是正在等待你操作。
 
-Codex `pass` review 会包含人类验证指南。提交/推送/创建 PR 前先完成人工检查清单。如果手工测试发现问题，或者人类校正了 review scope，运行 `humanize-flow review-feedback <bd-id>`；CLI 会打开你的编辑器填写反馈，然后生成一份 Codex + 人类反馈合并后的更新 verdict。
+如果人工测试在 review 后发现问题，或者需要校正 review scope，运行：
+
+```bash
+humanize-flow review-feedback <bd-id>
+```
+
+更完整的操作建议见 [最佳实践](docs/zh-CN/best-practices.md)。
 
 ## 从已有 Beads 任务开始规划
 
@@ -186,6 +201,7 @@ CLI 本身需要：
 
 - 英文文档：`docs/en/`
 - 简体中文文档：`docs/zh-CN/`
+- 推荐用法：[最佳实践](docs/zh-CN/best-practices.md)
 
 ## 开发
 

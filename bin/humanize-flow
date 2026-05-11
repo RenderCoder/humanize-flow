@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.4"
+HF_VERSION="0.5.5"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -1685,6 +1685,7 @@ review_dir = Path(sys.argv[1])
 ref = sys.argv[2]
 paths = []
 patterns = [
+    re.compile(r'^\s*Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\s*$', re.I | re.M),
     re.compile(r'^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b', re.I | re.M),
     re.compile(r'^\s*`(pass|changes_requested|blocked)`\s*$', re.I | re.M),
     re.compile(r'^\s*(pass|changes_requested|blocked)\s*$', re.I | re.M),
@@ -1720,6 +1721,7 @@ from pathlib import Path
 
 text = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')
 patterns = [
+    r'(?im)^\s*Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\s*$',
     r'(?im)^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b',
     r'(?im)^\s*`(pass|changes_requested|blocked)`\s*$',
     r'(?im)^\s*(pass|changes_requested|blocked)\s*$',
@@ -2482,7 +2484,8 @@ Follow the humanize-flow-reviewer skill exactly:
 $(review_scope_instruction "$ref" "$slug" "$bd_id")
 - Treat a missing approved handoff, plan, or acceptance criteria as a blocked review, not a pass.
 - Do not implement fixes.
-- Produce a review in Markdown using verdict: pass, changes_requested, or blocked.
+- The first non-empty line of the Markdown review must be exactly one machine-readable ASCII verdict line: Humanize-Flow-Verdict: pass, Humanize-Flow-Verdict: changes_requested, or Humanize-Flow-Verdict: blocked.
+- Produce the rest of the review in Markdown using the configured human language; do not translate or localize the machine-readable Humanize-Flow-Verdict line.
 - Include blocking findings with severity labels [P0]..[P3].
 - If the verdict is pass, include a "Human verification guide" section with concrete manual test steps and a checkbox checklist for the human to complete before commit/push.
 - If the verdict is changes_requested or blocked, include a "Human correction options" section explaining what context corrections, exclusions, or scope clarifications could change the verdict.
@@ -2645,6 +2648,8 @@ $(review_scope_instruction "$ref" "$slug" "$bd_id")
 - Treat human feedback as additional evidence or scope correction, not as an automatic override.
 - Reconcile disagreements explicitly: state whether the feedback changes the review scope, invalidates a prior finding, adds a new finding, or supplies missing verification evidence.
 - Re-evaluate the final verdict: pass, changes_requested, or blocked.
+- The first non-empty line of the updated Markdown review must be exactly one machine-readable ASCII verdict line: Humanize-Flow-Verdict: pass, Humanize-Flow-Verdict: changes_requested, or Humanize-Flow-Verdict: blocked.
+- Produce the rest of the updated review in Markdown using the configured human language; do not translate or localize the machine-readable Humanize-Flow-Verdict line.
 - If human feedback says a file or diff should be excluded, verify that exclusion against the approved plan/handoff before accepting it.
 - If the updated verdict is pass, include a "Human verification guide" section with concrete manual test steps and a checkbox checklist to complete before commit/push.
 - If the updated verdict is changes_requested or blocked, include the exact next command to return to the worker, usually: humanize-flow run $bd_id
@@ -3226,9 +3231,14 @@ for path in review_paths:
         continue
     seen.add(path)
     text = path.read_text(encoding="utf-8", errors="replace")
-    verdict_match = re.search(rf"(?ims)^##\s*{verdict_heading}\b(?P<body>.*?)(?:^##\s+|\Z)", text)
-    if not verdict_match or not re.search(r"(?i)(?:`|\b)pass(?:`|\b)", verdict_match.group("body")):
-        continue
+    machine_verdict = re.search(r"(?im)^\s*Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\s*$", text)
+    if machine_verdict:
+        if machine_verdict.group(1).lower() != "pass":
+            continue
+    else:
+        verdict_match = re.search(rf"(?ims)^##\s*{verdict_heading}\b(?P<body>.*?)(?:^##\s+|\Z)", text)
+        if not verdict_match or not re.search(r"(?i)(?:`|\b)pass(?:`|\b)", verdict_match.group("body")):
+            continue
     guide_match = re.search(
         rf"(?ims)^#{{1,6}}\s*{guide_heading}\b.*?(?=^#{{1,6}}\s+|\Z)",
         text,
@@ -3621,6 +3631,7 @@ def parse_ready(data):
     return out
 
 verdict_patterns = [
+    re.compile(r'^\s*Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\s*$', re.I | re.M),
     re.compile(r'^\s*(?:[-*]\s*)?(?:verdict|final verdict)\s*[:：]\s*`?(pass|changes_requested|blocked)`?\b', re.I | re.M),
     re.compile(r'^\s*`(pass|changes_requested|blocked)`\s*$', re.I | re.M),
     re.compile(r'^\s*(pass|changes_requested|blocked)\s*$', re.I | re.M),

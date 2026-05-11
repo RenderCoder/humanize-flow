@@ -3,6 +3,8 @@
 Use this structure:
 
 ```markdown
+Humanize-Flow-Verdict: pass | changes_requested | blocked
+
 # Humanize Flow Review: <bd-id>
 
 ## Verdict
@@ -66,6 +68,8 @@ Required when the verdict is `changes_requested` or `blocked`; optional when the
 ```bash
 humanize-flow review-feedback <bd-id> --from <feedback-file>
 ```
+
+The `Humanize-Flow-Verdict:` line is the machine-readable contract for the CLI. It must be the first non-empty line in the report, remain ASCII, and use exactly one of `pass`, `changes_requested`, or `blocked`. Do not translate or localize that line; localize the human-readable Markdown sections normally.
 
 ## Next step
 

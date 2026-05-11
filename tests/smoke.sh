@@ -160,7 +160,7 @@ case "$*" in
     printf '{"title":"Fix commit hook eslint failure","description":"Commit hook failed because eslint was unavailable.","priority":2,"labels":["humanize-flow","commit-hook","eslint"]}\n'
     ;;
   *"updating a Humanize Flow review with human manual-test feedback"*)
-    printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
+    printf 'Humanize-Flow-Verdict: changes_requested\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
     ;;
   *"running the Humanize Flow reviewer for this repository"*)
     if [ -n "${CODEX_REVIEW_COUNT:-}" ]; then
@@ -169,12 +169,12 @@ case "$*" in
       count=$((count + 1))
       printf '%s\n' "$count" > "$CODEX_REVIEW_COUNT"
       if [ $((count % 2)) -eq 1 ]; then
-        printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nYOLO first review requested changes.\n'
+        printf 'Humanize-Flow-Verdict: changes_requested\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nYOLO first review requested changes.\n'
       else
-        printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO second review passed.\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
+        printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO second review passed.\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
       fi
     else
-      printf '# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
+      printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
     fi
     ;;
   *"drafting a professional GitHub pull request"*)
@@ -432,6 +432,17 @@ assert data["recent_runs"], data
 assert "next_actions" in data
 assert "ahead" in data["git"]
 assert any("humanize-flow run bd-1234 --yolo" in action for action in data["next_actions"]), data["next_actions"]
+PY
+  mkdir -p docs/humanize-flow/imported-task/reviews
+  printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review: bd-1234\n\n## 评审结论\n\n结论为 `pass`。\n' > docs/humanize-flow/imported-task/reviews/20260509-010000-bd-1234.md
+  PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --json --limit 4 >"$TMP/status-verdict.json"
+  python3 - "$TMP/status-verdict.json" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1], encoding='utf-8'))
+reviews = data.get('recent_reviews') or []
+match = next((review for review in reviews if review['name'] == '20260509-010000-bd-1234.md'), None)
+assert match and match['verdict'] == 'pass', reviews
 PY
   CODEX_ARGS_CAPTURE="$TMP/codex-status-explain-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" status --explain --limit 4 >"$TMP/status-explain.txt"
   grep -q 'Status explanation:' "$TMP/status-explain.txt"

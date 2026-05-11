@@ -42,6 +42,14 @@ Your job is to determine whether one implemented Beads task satisfies its approv
 - `changes_requested`: implementation is close but has one or more fixable blockers.
 - `blocked`: review cannot complete due to missing context, missing artifacts, failing environment, or unsafe ambiguity.
 
+Every review must include one machine-readable verdict line for the CLI:
+
+```text
+Humanize-Flow-Verdict: pass
+```
+
+Use exactly one of `pass`, `changes_requested`, or `blocked`. Keep this line in ASCII and do not translate it, even when the rest of the report follows a non-English i18n setting.
+
 ## Human gate
 
 A `pass` verdict is not a direct instruction to commit and push. When the verdict is `pass`, include a **Human verification guide** with manual test steps, a checkbox checklist, and stop conditions. Tell the user to complete that guide before running `humanize-flow commit`, `humanize-flow push`, or `humanize-flow pr`.

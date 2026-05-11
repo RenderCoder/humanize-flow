@@ -2,6 +2,8 @@
 
 The CLI is a lightweight orchestrator. It is intentionally shell-based so the workflow is easy to inspect and modify.
 
+For the recommended command sequence and recovery rules, read [Best Practices](best-practices.md). In short: use normal `run` plus explicit `review` for daily work, use `run --yolo` for trusted automated loops, run `status --ai` before assuming a task is stuck, and record manual verification with `verify` before delivery commands.
+
 ## `humanize-flow help`
 
 Show command help.
@@ -205,6 +207,8 @@ Use the actual Beads task id when possible. Handoff slugs are also accepted and 
 Review defaults to yolo mode and passes Codex `--dangerously-bypass-approvals-and-sandbox` to avoid approval prompts blocking the review loop. Disable that default with `humanize-flow config set review.yolo false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, or a one-run `--no-yolo`. When yolo is disabled, change the sandbox with `humanize-flow config set review.sandbox <mode>` or `HUMANIZE_FLOW_REVIEW_SANDBOX`; override one run with `--sandbox <mode>`. Passing `--sandbox` also disables yolo for that run. Supported modes are `read-only`, `workspace-write`, and `danger-full-access`.
 
 When the verdict is `pass`, the review report includes a human verification guide with manual test steps and a checklist to complete before commit/push. When the verdict is `changes_requested` or `blocked`, the report includes human correction options that can be fed into `review-feedback`.
+
+Review reports also include one machine-readable ASCII verdict line such as `Humanize-Flow-Verdict: pass`. That line is not localized; it is the stable contract used by `run --yolo`, `status`, `verify`, and PR guide collection.
 
 ## `humanize-flow verify`
 

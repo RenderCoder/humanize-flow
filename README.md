@@ -75,35 +75,50 @@ After reviewing the plan:
 ```bash
 humanize-flow approve undo-redo --materialize-bd
 humanize-flow run-next
-humanize-flow run <bd-id> --yolo
 humanize-flow review <bd-id>
-humanize-flow review-feedback <bd-id>
-humanize-flow status --ai
 humanize-flow verify <bd-id>
 humanize-flow commit
 humanize-flow push
 humanize-flow pr
 ```
 
-Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-sonnet-4-6`, permission mode `bypassPermissions`, and `claude.humanize=required`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless `codex.model` or `codex.reasoning_effort` is configured with `humanize-flow config`; review and review-feedback default to yolo mode with Codex `--dangerously-bypass-approvals-and-sandbox` and can be lowered with `review.yolo=false`, `HUMANIZE_FLOW_REVIEW_YOLO=false`, `--no-yolo`, `review.sandbox`, `HUMANIZE_FLOW_REVIEW_SANDBOX`, or `--sandbox`. Lower Claude Code permissions with `--permission-mode auto`, `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto`, or `humanize-flow config set claude.permission_mode auto` when you need classifier-gated execution. With `required`, the worker prompt requires Claude to start humanize/RLCR from the approved plan before editing code; if humanize is unavailable, lower the mode with `--humanize-mode auto`, `--no-humanize`, `HUMANIZE_FLOW_CLAUDE_HUMANIZE`, or `humanize-flow config set claude.humanize <mode>`. The CLI keeps the raw Claude `stream-json` events in the run directory for debugging, while showing a human-readable log by default. To supervise the work in a Claude Code UI, run:
+That is the recommended daily path: plan, approve, implement one ready task, review it, complete the human verification guide, then deliver. Use explicit Beads IDs when you know the next task:
+
+```bash
+humanize-flow run <bd-id>
+```
+
+Use `run-next` when you want Humanize Flow to choose from the ready queue and prompt if multiple groups are available.
+
+Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-sonnet-4-6`, permission mode `bypassPermissions`, and `claude.humanize=required`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless configured with `humanize-flow config`. Review and review-feedback default to Codex yolo mode so prompts do not block the review loop. To supervise the work in a Claude Code UI, run:
 
 ```bash
 humanize-flow run <bd-id> --interactive
 ```
 
-Claude provider overrides are opt-in. By default, worker runs use Claude Code's normal global provider/auth configuration. Use `humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env`, `HUMANIZE_FLOW_CLAUDE_ENV_FILE`, or `humanize-flow config set claude.env_file <file>` when you intentionally want a project-specific provider environment. Keep token-bearing env files untracked.
+Use YOLO for trusted worktrees when you want Humanize Flow to keep running Claude implementation plus Codex review until a task passes or the correction limit is reached:
 
-Use `humanize-flow status` when a run looks stuck. It summarizes the latest run/review logs, Beads ready queue, handoff state, inner humanize/RLCR traces, suspicious blocker signals, and next actions. Add `--ai` to ask Codex for a plain-language diagnosis of the current status based on the deterministic status snapshot. `--explain` is kept as an alias.
+```bash
+humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
+```
 
-Use `humanize-flow run <bd-id> --yolo` for an approved handoff when you want the CLI to force Claude Code permission mode `bypassPermissions`, force Codex review yolo mode, and repeat Claude correction plus Codex review until the review passes or the 3-round default limit is reached. YOLO forces `--humanize-mode off` to avoid nested review loops. When the target is a handoff slug or Beads Epic ID, YOLO re-queries `bd ready --json` before each child task, selects the next ready child that belongs to the handoff, preserving Beads' ready ordering instead of the handoff's static child order. After a child task passes review, the CLI closes that Beads task so dependencies can unblock the next ready task. Each Codex review is scoped to the completed child task; Codex must not fail it just because sibling Epic tasks remain unfinished. Override the per-task correction limit with `--max-round N`.
+YOLO forces `--humanize-mode off` to avoid nested review loops, re-queries Beads ready state before each Epic child task, scopes each review to the completed child task, and separates infrastructure retries from business correction rounds. It still stops at the human verification gate: after a `pass` review, complete the report's `Human verification guide` and run `humanize-flow verify <bd-id>` before `commit`, `push`, or `pr`.
 
-YOLO separates business correction rounds from transient infrastructure retries. `--max-round` controls how many Claude-fix plus Codex-review correction rounds a task may use. `--retry N` and `--retry-delay SECONDS` control retries for failed phases such as Claude provider calls, Codex review calls, `bd ready`, and Beads close operations. Network or provider failures do not consume a correction round; if retries are exhausted, the CLI prints a copyable `humanize-flow run ... --yolo` command so the same handoff can be continued later.
+When a run looks stuck, start with:
 
-YOLO does not replace human verification. When Codex returns `pass`, complete the review report's `Human verification guide`, then run `humanize-flow verify <bd-id>` to record that the manual gate is complete. If no review artifact exists, `verify` still records a standalone human confirmation. Delivery commands such as `commit`, `push`, `pr`, and release steps should happen after that explicit verification.
+```bash
+humanize-flow status --ai
+```
 
-After review passes, `humanize-flow commit` asks Codex to select which changed files belong in the commit from the full working tree every time. Existing staged changes are treated as context only, so Codex can include unstaged paths that belong and exclude accidentally staged paths. The CLI stages the selected paths, drafts a Lore commit message, then commits only those selected paths after confirmation. `humanize-flow push` pushes the current branch; if multiple remotes exist, it prompts for the remote. `humanize-flow pr` asks Codex to draft a detailed, professional GitHub PR title/body in the configured workflow language with WHY/context prioritized over HOW/WHAT, includes passing review `Human verification guide` content as reviewer-facing validation context, saves the draft under `.humanize-flow/runs/`, prompts for the GitHub remote when multiple remotes exist, and creates the PR with `gh pr create --repo`.
+It combines a deterministic status snapshot with a plain-language Codex explanation of whether the workflow is running, blocked, completed, or waiting for you.
 
-Codex `pass` reviews include a human verification guide. Complete that manual checklist before commit/push/PR. If manual testing finds a problem or corrects the review scope, run `humanize-flow review-feedback <bd-id>`; the CLI opens your editor for feedback and then produces an updated combined Codex + human review verdict.
+If manual testing finds an issue after review, or if the review needs human scope correction, run:
+
+```bash
+humanize-flow review-feedback <bd-id>
+```
+
+For fuller operational guidance, read [Best Practices](docs/en/best-practices.md).
 
 ## Planning from an existing Beads task
 
@@ -187,6 +202,7 @@ Recommended workflow tools:
 - English docs: `docs/en/`
 - 简体中文文档：`docs/zh-CN/`
 - 中文 README：`README.zh-CN.md`
+- Recommended usage: [Best Practices](docs/en/best-practices.md)
 
 ## Development
 

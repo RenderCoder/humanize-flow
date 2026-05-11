@@ -90,6 +90,16 @@ This only marks the handoff approved. It should not create duplicate Beads tasks
 
 ## 4. Execute with Claude Code
 
+Recommended daily sequence after approval:
+
+```bash
+humanize-flow run-next
+humanize-flow review <bd-id>
+humanize-flow verify <bd-id>
+```
+
+Use normal `run` when you want Claude Code to use the default humanize/RLCR implementation path. Use `run --yolo` only when the handoff is well-scoped, the worktree is trusted, and you want Humanize Flow to own the full Claude plus Codex review loop. See [Best Practices](best-practices.md) for the decision guide.
+
 Run the next ready Humanize Flow task:
 
 ```bash
@@ -132,6 +142,14 @@ The reviewer checks the implementation against the approved artifacts and return
 - `pass`
 - `changes_requested`
 - `blocked`
+
+Each review report must also include one machine-readable ASCII verdict line, for example:
+
+```text
+Humanize-Flow-Verdict: pass
+```
+
+Use exactly one of `pass`, `changes_requested`, or `blocked` on that line. The rest of the report follows the configured i18n language, but this line is intentionally not localized so `run --yolo`, `status`, `verify`, and PR guide collection can parse the result reliably.
 
 Missing handoff, plan, or acceptance evidence should produce `blocked`, not `pass`.
 

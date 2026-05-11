@@ -1,3 +1,5 @@
+Humanize-Flow-Verdict: pass | changes_requested | blocked
+
 # Humanize Flow Review
 
 ## Verdict

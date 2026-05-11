@@ -6,6 +6,16 @@ All notable changes to humanize-flow will be documented in this file.
 
 No unreleased changes yet.
 
+## [0.5.5] - 2026-05-11
+
+### Fixed
+
+- Require and parse a stable `Humanize-Flow-Verdict: ...` line in Codex review and review-feedback reports so localized review prose does not break `run --yolo`, `status`, `verify`, or PR guide collection.
+
+### Documentation
+
+- Add paired English and Simplified Chinese best-practice guides covering daily workflow, YOLO usage, status diagnosis, review feedback, provider env files, and delivery discipline.
+
 ## [0.5.4] - 2026-05-11
 
 ### Added

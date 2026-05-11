@@ -2,6 +2,8 @@
 
 CLI 是轻量调度器，刻意使用 shell 实现，方便查看和修改。
 
+推荐命令顺序和恢复规则见 [最佳实践](best-practices.md)。简要原则：日常开发用普通 `run` 加显式 `review`；可信自动化闭环用 `run --yolo`；怀疑卡住前先看 `status --ai`；交付前用 `verify` 记录人工验证。
+
 ## `humanize-flow help`
 
 显示帮助。
@@ -205,6 +207,8 @@ humanize-flow review <bd-id> --sandbox workspace-write
 `review` 默认使用 yolo 模式，会传给 Codex `--dangerously-bypass-approvals-and-sandbox`，避免权限确认提示阻塞 review 循环。可用 `humanize-flow config set review.yolo false`、`HUMANIZE_FLOW_REVIEW_YOLO=false` 或单次 `--no-yolo` 关闭默认 yolo。关闭 yolo 后，可用 `humanize-flow config set review.sandbox <mode>` 或 `HUMANIZE_FLOW_REVIEW_SANDBOX` 修改 sandbox 默认值，也可用 `--sandbox <mode>` 覆盖单次运行。传入 `--sandbox` 也会自动关闭本次 yolo。支持的模式是 `read-only`、`workspace-write` 和 `danger-full-access`。
 
 当 verdict 是 `pass` 时，review 报告会包含人类验证指南，包括手工测试步骤和提交/推送前检查清单。当 verdict 是 `changes_requested` 或 `blocked` 时，报告会包含人类校正选项，可继续交给 `review-feedback` 合并。
+
+Review 报告还会包含一行给程序解析的 ASCII verdict，例如 `Humanize-Flow-Verdict: pass`。这一行不会被本地化；它是 `run --yolo`、`status`、`verify` 和 PR 验证指南收集逻辑使用的稳定契约。
 
 ## `humanize-flow verify`
 
