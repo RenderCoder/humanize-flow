@@ -4,7 +4,9 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Fixed
+
+- Ignore root-level generated zip archives and remove tracked release archives from source control.
 
 ## [0.5.7] - 2026-05-11
 

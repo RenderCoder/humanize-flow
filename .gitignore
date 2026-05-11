@@ -5,7 +5,7 @@
 docs/humanize-flow/unknown/
 
 # Generated packages
-humanize-flow.zip
+/*.zip
 *.tmp
 
 # Secrets and local environments
