@@ -17,6 +17,16 @@ bin/humanize-flow config show | grep -q 'codex.model: (codex default)'
 bin/humanize-flow config show | grep -q 'codex.reasoning_effort: (codex default)'
 bin/humanize-flow config show | grep -q 'claude.humanize: required'
 test "$(HUMANIZE_FLOW_CLAUDE_HUMANIZE=off bin/humanize-flow config get claude.humanize)" = "off"
+bin/humanize-flow config show | grep -q 'worker.provider: claude'
+bin/humanize-flow config show | grep -q 'worker.codex.model: gpt-5.5'
+bin/humanize-flow config show | grep -q 'worker.codex.reasoning_effort: medium'
+bin/humanize-flow config show | grep -q 'yolo.max_round: 5'
+bin/humanize-flow config show | grep -q 'yolo.review_strategy: final'
+test "$(HUMANIZE_FLOW_WORKER_PROVIDER=codex bin/humanize-flow config get worker.provider)" = "codex"
+test "$(HUMANIZE_FLOW_WORKER_CODEX_MODEL=gpt-5.5 bin/humanize-flow config get worker.codex.model)" = "gpt-5.5"
+test "$(HUMANIZE_FLOW_WORKER_CODEX_REASONING_EFFORT=high bin/humanize-flow config get worker.codex.reasoning_effort)" = "high"
+test "$(HUMANIZE_FLOW_YOLO_MAX_ROUND=7 bin/humanize-flow config get yolo.max_round)" = "7"
+test "$(HUMANIZE_FLOW_YOLO_REVIEW_STRATEGY=each-task bin/humanize-flow config get yolo.review_strategy)" = "each-task"
 bin/humanize-flow config show | grep -q 'review.yolo: true'
 test "$(HUMANIZE_FLOW_REVIEW_YOLO=false bin/humanize-flow config get review.yolo)" = "false"
 bin/humanize-flow config show | grep -q 'review.sandbox: danger-full-access'
@@ -162,7 +172,15 @@ if [ -n "${CODEX_FAIL_ONCE_FILE:-}" ] && [ ! -f "$CODEX_FAIL_ONCE_FILE" ]; then
   exit 43
 fi
 printf '%s\n' "$*" > "$CODEX_ARGS_CAPTURE"
+if [ -n "${CODEX_ARGS_CAPTURE_APPEND:-}" ]; then
+  printf '%s\n' "$*" >> "$CODEX_ARGS_CAPTURE_APPEND"
+fi
 case "$*" in
+  *"resolving PR target branch conflicts"*)
+    printf 'base\nfeature\n' > conflict.txt
+    git add conflict.txt
+    printf 'Resolved conflict.txt by keeping both base and feature lines.\n'
+    ;;
   *"explaining a Humanize Flow status snapshot"*)
     printf 'Status explanation: latest Humanize Flow activity is understandable from the snapshot.\n'
     ;;
@@ -174,6 +192,15 @@ case "$*" in
     ;;
   *"updating a Humanize Flow review with human manual-test feedback"*)
     printf 'Humanize-Flow-Verdict: changes_requested\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
+    ;;
+  *"You are the Codex implementer in the Humanize Flow workflow."*)
+    if [ -n "${CODEX_WORKER_COUNT:-}" ]; then
+      count=0
+      if [ -f "$CODEX_WORKER_COUNT" ]; then count="$(cat "$CODEX_WORKER_COUNT")"; fi
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$CODEX_WORKER_COUNT"
+    fi
+    printf 'Codex worker implemented requested scope.\n'
     ;;
   *"running the Humanize Flow reviewer for this repository"*)
     case "$*" in
@@ -357,6 +384,15 @@ ENV
   CLAUDE_ARGS_CAPTURE="$TMP/claude-auto-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
   grep -q 'Claude humanize mode: auto' "$TMP/claude-auto-humanize-args.txt"
   "$ROOT/bin/humanize-flow" config set claude.humanize required >/dev/null
+  "$ROOT/bin/humanize-flow" config set worker.provider codex >/dev/null
+  test "$("$ROOT/bin/humanize-flow" config get worker.provider)" = "codex"
+  set +e
+  CODEX_ARGS_CAPTURE="$TMP/codex-non-yolo-worker-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --no-humanize >"$TMP/codex-non-yolo.stdout" 2>"$TMP/codex-non-yolo.stderr"
+  non_yolo_status=$?
+  set -e
+  test "$non_yolo_status" -ne 0
+  grep -q 'worker.provider=codex currently supports only run --yolo' "$TMP/codex-non-yolo.stderr"
+  "$ROOT/bin/humanize-flow" config set worker.provider claude >/dev/null
   HUMANIZE_FLOW_NONINTERACTIVE=1 CLAUDE_ARGS_CAPTURE="$TMP/claude-run-next-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run-next >/dev/null
   grep -q 'bd-1234' "$TMP/claude-run-next-args.txt"
   test "$(find .humanize-flow/runs -name claude-final.jsonl -print | wc -l | tr -d ' ')" -gt 0
@@ -501,13 +537,13 @@ PY
   printf '# Request\n' > docs/humanize-flow/yolo-task/request.md
   printf '# Plan\n' > docs/humanize-flow/yolo-task/plan.md
   printf '# Acceptance\n' > docs/humanize-flow/yolo-task/acceptance.md
-  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-yolo --yolo --max-round 2 >"$TMP/yolo.stdout"
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-yolo --yolo --review-each-task --max-round 2 >"$TMP/yolo.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "2"
   grep -q -- '--permission-mode bypassPermissions' "$TMP/claude-yolo-args.txt"
   grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-args.txt"
   grep -q -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-yolo-review-args.txt"
-  grep -q 'human verification gate: YOLO automates Claude work and Codex review only' "$TMP/yolo.stdout"
+  grep -q 'human verification gate: YOLO automates worker implementation and Codex review only' "$TMP/yolo.stdout"
   grep -q 'Latest review path: docs/humanize-flow/yolo-task/reviews/' "$TMP/claude-yolo-args.txt"
   grep -R 'YOLO second review passed' docs/humanize-flow/yolo-task/reviews >/dev/null
   python3 - <<'PY'
@@ -537,7 +573,7 @@ PY
   printf '# Plan\n' > docs/humanize-flow/retry-task/plan.md
   printf '# Acceptance\n' > docs/humanize-flow/retry-task/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/claude-fail-once" "$TMP/codex-fail-once"
-  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_FAIL_ONCE_FILE="$TMP/claude-fail-once" CODEX_FAIL_ONCE_FILE="$TMP/codex-fail-once" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-retry-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-retry-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-retry --yolo --max-round 2 --retry 2 --retry-delay 0 >"$TMP/yolo-retry.stdout" 2>&1
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_FAIL_ONCE_FILE="$TMP/claude-fail-once" CODEX_FAIL_ONCE_FILE="$TMP/codex-fail-once" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-retry-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-retry-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-retry --yolo --review-each-task --max-round 2 --retry 2 --retry-delay 0 >"$TMP/yolo-retry.stdout" 2>&1
   test "$(cat "$TMP/yolo-claude-count.txt")" = "3"
   test "$(cat "$TMP/yolo-review-count.txt")" = "2"
   grep -q 'phase retry: 2 attempt(s), 0s delay' "$TMP/yolo-retry.stdout"
@@ -569,7 +605,7 @@ PY
   printf '# Plan\n' > docs/humanize-flow/required-task/plan.md
   printf '# Acceptance\n' > docs/humanize-flow/required-task/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
-  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-required-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-required-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-required --yolo --humanize-mode required --max-round 2 >"$TMP/yolo-required.stdout"
+  CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-yolo-required-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-yolo-required-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-required --yolo --review-each-task --humanize-mode required --max-round 2 >"$TMP/yolo-required.stdout"
   grep -q 'Claude humanize mode: off' "$TMP/claude-yolo-required-args.txt"
   ! grep -q 'Claude humanize mode: required' "$TMP/claude-yolo-required-args.txt"
   python3 - <<'PY'
@@ -602,7 +638,7 @@ PY
   printf '# Acceptance\n' > docs/humanize-flow/epic-yolo/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo.stdout"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-each-task --max-round 2 >"$TMP/epic-yolo.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "4"
   test "$(cat "$TMP/yolo-review-count.txt")" = "4"
   grep -q 'Epic scheduling: dynamic via bd ready --json' "$TMP/epic-yolo.stdout"
@@ -614,7 +650,7 @@ PY
   test "$(sed -n '2p' "$TMP/bd-close-args.txt")" = "bd-epic.1"
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-final.stdout"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo-final.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "1"
   grep -q 'review strategy: final full-scope review after all child tasks' "$TMP/epic-yolo-final.stdout"
@@ -623,6 +659,28 @@ PY
   grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-final-args.txt"
   grep -qx 'bd-epic.1' "$TMP/bd-close-args.txt"
   grep -qx 'bd-epic.2' "$TMP/bd-close-args.txt"
+  rm -f "$TMP/codex-worker-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
+  : > "$TMP/bd-ready-dynamic-state.txt"
+  "$ROOT/bin/humanize-flow" config set worker.provider codex >/dev/null
+  "$ROOT/bin/humanize-flow" config set worker.codex.model gpt-5.5 >/dev/null
+  "$ROOT/bin/humanize-flow" config set worker.codex.reasoning_effort medium >/dev/null
+  "$ROOT/bin/humanize-flow" config set yolo.max_round 5 >/dev/null
+  "$ROOT/bin/humanize-flow" config set yolo.review_strategy final >/dev/null
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CODEX_WORKER_COUNT="$TMP/codex-worker-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CODEX_ARGS_CAPTURE="$TMP/codex-worker-yolo-args.txt" CODEX_ARGS_CAPTURE_APPEND="$TMP/codex-worker-yolo-all-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo >"$TMP/codex-worker-yolo.stdout"
+  test "$(cat "$TMP/codex-worker-count.txt")" = "2"
+  test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -q 'worker provider: codex' "$TMP/codex-worker-yolo.stdout"
+  grep -q 'max rounds: 5' "$TMP/codex-worker-yolo.stdout"
+  grep -q 'review strategy: final full-scope review after all child tasks' "$TMP/codex-worker-yolo.stdout"
+  grep -q 'YOLO target 1/2: codex worker' "$TMP/codex-worker-yolo.stdout"
+  grep -q 'starting Codex worker session' "$TMP/codex-worker-yolo.stdout"
+  grep -q 'humanize mode: off (Codex worker does not run humanize)' "$TMP/codex-worker-yolo.stdout"
+  grep -q -- '--model gpt-5.5' "$TMP/codex-worker-yolo-all-args.txt"
+  grep -q -- '-c model_reasoning_effort="medium"' "$TMP/codex-worker-yolo-all-args.txt"
+  grep -R 'You are the Codex implementer in the Humanize Flow workflow.' .humanize-flow/runs/*/codex-worker-prompt.md >/dev/null
+  grep -R 'do not start humanize/RLCR' .humanize-flow/runs/*/codex-worker-prompt.md >/dev/null
+  test "$(find .humanize-flow/runs -name codex-worker-final.md -print | wc -l | tr -d ' ')" -gt 0
+  "$ROOT/bin/humanize-flow" config set worker.provider claude >/dev/null
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
   printf 'bd-epic.2\nbd-epic.1\n' > "$TMP/bd-ready-dynamic-state.txt"
   BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-resume-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-resume-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-resume.stdout"
@@ -663,6 +721,23 @@ PY
   git remote add upstream git@github.com:example/upstream.git
   printf '2\n' | HUMANIZE_FLOW_LANGUAGE=zh CODEX_ARGS_CAPTURE="$TMP/codex-pr-multi-remote-args.txt" GH_ARGS_CAPTURE="$TMP/gh-pr-multi-remote-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr --base main --yes >/dev/null
   grep -q -- '--repo example/upstream' "$TMP/gh-pr-multi-remote-args.txt"
+  git checkout main >/dev/null 2>&1
+  printf 'base\n' > conflict.txt
+  git add conflict.txt
+  git commit -qm 'Add base conflict line'
+  git checkout feature/pr-smoke >/dev/null 2>&1
+  printf 'feature\n' > conflict.txt
+  git add conflict.txt
+  git commit -qm 'Add feature conflict line'
+  CODEX_ARGS_CAPTURE="$TMP/codex-pr-resolve-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr-resolve --base main --no-fetch >"$TMP/pr-resolve.stdout"
+  grep -q 'resolving PR target branch conflicts' "$TMP/codex-pr-resolve-args.txt"
+  grep -q 'git diff --name-only --diff-filter=U' "$TMP/codex-pr-resolve-args.txt"
+  test -z "$(git diff --name-only --diff-filter=U)"
+  grep -qx 'base' conflict.txt
+  grep -qx 'feature' conflict.txt
+  grep -R '^conflict.txt$' .humanize-flow/runs/*/conflicted-files.txt >/dev/null
+  grep -q 'conflicts resolved' "$TMP/pr-resolve.stdout"
+  git commit -qm 'Resolve PR target conflict'
   printf 'change\n' > commit-test.txt
   CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >/dev/null
   git log -1 --pretty=%B | grep -q 'fake review'

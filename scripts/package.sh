@@ -4,6 +4,10 @@ IFS=$'\n\t'
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 OUT="${1:-$ROOT/humanize-flow.zip}"
+case "$OUT" in
+  /*) ;;
+  *) OUT="$PWD/$OUT" ;;
+esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

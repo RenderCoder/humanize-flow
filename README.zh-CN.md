@@ -82,6 +82,8 @@ humanize-flow push
 humanize-flow pr
 ```
 
+如果 GitHub 提示 PR 无法干净合入目标分支，在 PR 分支运行 `humanize-flow pr-resolve --base main`。它会集成目标分支，让 Codex 只解决这次集成造成的冲突，并把最终 commit 或 rebase continue 留给你控制。
+
 这是日常推荐路径：规划、批准、执行一个 ready 任务、review、完成人工验证，再交付。明确知道下一个任务时，优先使用实际 Beads ID：
 
 ```bash
@@ -96,14 +98,24 @@ Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的
 humanize-flow run <bd-id> --interactive
 ```
 
-在可信 worktree 中，如果希望 Humanize Flow 自动推进 Claude 实现 + Codex review，使用 YOLO：
+在可信 worktree 中，如果希望 Humanize Flow 自动推进 worker 实现 + Codex review，使用 YOLO：
 
 ```bash
-humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
-humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
+humanize-flow run <handoff-slug-or-epic-id> --yolo
+humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 5 --retry 5 --retry-delay 20
 ```
 
-YOLO 会强制 `--humanize-mode off`，避免嵌套 review 循环；恢复运行时会从已经关闭的 Beads 子任务恢复进度，并优先继续已标记为 `in_progress` 的 handoff 子任务；每个剩余 Epic 子任务开始前都会重新查询 Beads ready 状态；默认每次 review 只审当前完成的子任务；并把基础设施重试和业务修正轮数分开。如果希望 Epic YOLO 跳过每个子任务的 Codex review，只在所有子任务实现后做一次全局 review/correction 循环，可以加 `--review-at-end`。这种方式更快，也让 Codex 站在整体视角验收，但问题会更晚才暴露。YOLO 仍然会停在人工验证门禁：review `pass` 后，先完成报告里的 `Human verification guide`，再运行 `humanize-flow verify <bd-id>`，之后才执行 `commit`、`push` 或 `pr`。
+YOLO 会强制 `--humanize-mode off`；恢复运行时会从已经关闭的 Beads 子任务恢复进度，并优先继续已标记为 `in_progress` 的 handoff 子任务；每个剩余 Epic 子任务开始前都会重新查询 Beads ready 状态；并把基础设施重试和业务修正轮数分开。默认情况下，YOLO 会先实现所有 ready 的 handoff 子任务，再做一次全局 Codex review/correction 循环。需要旧的逐子任务 review 节奏时，使用 `--review-each-task`。默认业务修正轮数是 5，也可以用 `humanize-flow config set yolo.max_round 5` 持久化。
+
+如果希望用 Codex 替代 Claude Code 执行 YOLO 实现，可以一次性设置 worker provider：
+
+```bash
+humanize-flow config set worker.provider codex
+humanize-flow config set worker.codex.model gpt-5.5
+humanize-flow config set worker.codex.reasoning_effort medium
+```
+
+Codex worker 只支持 `run --yolo`；它不会运行 humanize/RLCR，也不支持 Claude 专属的交互 session 能力。YOLO 仍然会停在人工验证门禁：review `pass` 后，先完成报告里的 `Human verification guide`，再运行 `humanize-flow verify <bd-id>`，之后才执行 `commit`、`push` 或 `pr`。
 
 当你怀疑流程卡住时，先运行：
 

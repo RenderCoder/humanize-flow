@@ -82,6 +82,8 @@ humanize-flow push
 humanize-flow pr
 ```
 
+If GitHub reports that the PR cannot merge cleanly with the target branch, run `humanize-flow pr-resolve --base main` from the PR branch. It integrates the target branch, asks Codex to resolve only those conflicts, and leaves the final commit or rebase continuation under your control.
+
 That is the recommended daily path: plan, approve, implement one ready task, review it, complete the human verification guide, then deliver. Use explicit Beads IDs when you know the next task:
 
 ```bash
@@ -96,14 +98,24 @@ Worker runs default to Claude Code print mode with detailed progress visible in 
 humanize-flow run <bd-id> --interactive
 ```
 
-Use YOLO for trusted worktrees when you want Humanize Flow to keep running Claude implementation plus Codex review until a task passes or the correction limit is reached:
+Use YOLO for trusted worktrees when you want Humanize Flow to keep running worker implementation plus Codex review until the handoff passes or the correction limit is reached:
 
 ```bash
-humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 3 --retry 5 --retry-delay 20
-humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end --max-round 3
+humanize-flow run <handoff-slug-or-epic-id> --yolo
+humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 5 --retry 5 --retry-delay 20
 ```
 
-YOLO forces `--humanize-mode off` to avoid nested review loops, restores progress from already closed Beads child tasks when resuming, continues handoff child tasks already marked `in_progress`, re-queries Beads ready state before each remaining Epic child task, scopes each default review to the completed child task, and separates infrastructure retries from business correction rounds. Add `--review-at-end` when you want Epic YOLO to skip per-child Codex reviews and run one final full-scope review/correction loop after all child tasks are implemented. This is faster and gives Codex a global view, but defects are caught later. YOLO still stops at the human verification gate: after a `pass` review, complete the report's `Human verification guide` and run `humanize-flow verify <bd-id>` before `commit`, `push`, or `pr`.
+YOLO forces `--humanize-mode off`, restores progress from already closed Beads child tasks when resuming, continues handoff child tasks already marked `in_progress`, re-queries Beads ready state before each remaining Epic child task, and separates infrastructure retries from business correction rounds. By default, YOLO now implements all ready handoff children first and then runs one final full-scope Codex review/correction loop. Use `--review-each-task` when you prefer the older per-child review cadence. The default correction limit is 5 rounds and can be persisted with `humanize-flow config set yolo.max_round 5`.
+
+To use Codex instead of Claude Code for YOLO implementation, set the worker provider once:
+
+```bash
+humanize-flow config set worker.provider codex
+humanize-flow config set worker.codex.model gpt-5.5
+humanize-flow config set worker.codex.reasoning_effort medium
+```
+
+Codex worker mode only supports `run --yolo`; it does not run humanize/RLCR or Claude-specific interactive/session features. YOLO still stops at the human verification gate: after a `pass` review, complete the report's `Human verification guide` and run `humanize-flow verify <bd-id>` before `commit`, `push`, or `pr`.
 
 When a run looks stuck, start with:
 

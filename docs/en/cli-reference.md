@@ -104,16 +104,18 @@ humanize-flow materialize-bd <slug>
 
 ## `humanize-flow run`
 
-Run Claude Code worker for one Beads task.
+Run the configured worker for one Beads task.
 
 ```bash
 humanize-flow run <bd-id>
 humanize-flow run <bd-id> --yolo
 humanize-flow run <bd-id> --yolo --max-round 5
 humanize-flow run <bd-id> --yolo --retry 5 --retry-delay 20
-humanize-flow run <handoff-slug-or-epic-id> --yolo --review-at-end
+humanize-flow run <handoff-slug-or-epic-id> --yolo
+humanize-flow run <handoff-slug-or-epic-id> --yolo --review-each-task
 humanize-flow run <bd-id> --interactive
 humanize-flow run <bd-id> --model claude-sonnet-4-6
+humanize-flow run <bd-id> --worker-provider codex --yolo
 humanize-flow run <bd-id> --humanize-mode auto
 humanize-flow run <bd-id> --no-humanize
 humanize-flow run <bd-id> --env-file .humanize-flow/claude-provider.env
@@ -131,15 +133,17 @@ Override one run with `--humanize`, `--humanize-mode required|auto|off`, or `--n
 
 Claude provider environment files are opt-in. By default, `run` uses the Claude Code process environment and Claude Code's normal global provider/auth configuration. Use `--env-file <file>` to load provider variables for one run, `HUMANIZE_FLOW_CLAUDE_ENV_FILE=<file>` for one shell command, or `humanize-flow config set claude.env_file <file>` for a persistent default. Use `--no-env-file` to ignore a configured file. Relative paths are resolved from the repository root. Keep these files untracked when they contain tokens.
 
-`--yolo` starts a Claude+Codex loop for an approved Humanize Flow handoff. It forces Claude Code permission mode `bypassPermissions`, forces `--humanize-mode off` to avoid nested humanize/RLCR review loops, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 3 rounds per target task.
+`--yolo` starts a worker+Codex loop for an approved Humanize Flow handoff. It forces `--humanize-mode off` to avoid nested humanize/RLCR review loops, runs Codex review in yolo mode, parses the review verdict, and continues with the latest review as the next correction target until the verdict is `pass` or `--max-round` is reached. The default maximum is 5 rounds.
 
-`--review-at-end` changes Epic/handoff YOLO review scheduling. Instead of reviewing each child task as soon as Claude finishes it, the CLI implements all ready handoff children first, closes each child as "implemented; final review pending" so Beads dependencies can unblock, then runs one final full-scope Codex review against the handoff slug or Epic ID. If that final review returns `changes_requested` or `blocked`, the CLI runs a full-scope Claude correction and reviews again until `pass` or `--max-round` is reached. `--final-review-only` is an alias. Use this when per-child reviews are too slow or too narrow and you want Codex to assess the whole Epic at once. The tradeoff is later defect detection: downstream child tasks may build on unreviewed child output until the final review.
+By default, Epic/handoff YOLO uses final-review scheduling. The CLI implements all ready handoff children first, closes each child as "implemented; final review pending" so Beads dependencies can unblock, then runs one final full-scope Codex review against the handoff slug or Epic ID. If that final review returns `changes_requested` or `blocked`, the CLI runs a full-scope worker correction and reviews again until `pass` or `--max-round` is reached. `--review-at-end` and `--final-review-only` are accepted aliases for the default. Use `--review-each-task` when you want the older cadence that reviews each child task as soon as the worker finishes it. Final review is faster and gives Codex a whole-Epic view; the tradeoff is later defect detection.
 
-`--max-round` counts business correction rounds only: one Claude worker run plus one Codex review. Transient command failures are handled by `--retry` and `--retry-delay` instead. YOLO retries failed phases such as Claude provider calls, Codex review calls, `bd ready`, and Beads close operations before giving up. These retries do not consume a correction round. If retries are exhausted, the error includes a copyable `humanize-flow run ... --yolo` command so you can continue later after the network or provider recovers.
+`--max-round` counts business correction rounds only: one worker run plus one Codex review. It defaults to `yolo.max_round`, which is 5 when unset. Transient command failures are handled by `--retry` and `--retry-delay` instead. YOLO retries failed phases such as worker provider calls, Codex review calls, `bd ready`, and Beads close operations before giving up. These retries do not consume a correction round. If retries are exhausted, the error includes a copyable `humanize-flow run ... --yolo` command so you can continue later after the network or provider recovers.
+
+Set `worker.provider=codex` to use Codex instead of Claude Code for YOLO implementation. Codex worker runs use `worker.codex.model` and `worker.codex.reasoning_effort`, defaulting to `gpt-5.5` and `medium`. Codex worker mode only supports `run --yolo`; it does not start humanize/RLCR or support Claude-specific interactive/session flags.
 
 YOLO automates implementation and Codex review only. It does not automatically complete the human verification gate. After a `pass` review, follow the review report's `Human verification guide`, then run `humanize-flow verify <bd-id>` before delivery commands such as `commit`, `push`, `pr`, or release.
 
-When the target is a handoff slug or Beads Epic ID, YOLO treats the handoff as an Epic queue. At startup it reads the handoff child tasks and recovers progress from Beads children that are already closed, so retrying after an interrupted run does not lose completed-child progress. If a remaining handoff child is already marked `in_progress`, YOLO continues that child before consulting the ready queue; this handles runs interrupted after Beads moved a child out of `ready`. Before each other remaining child task it re-queries `bd ready --json`, intersects the ready set with the remaining handoff children, and selects the next ready child in Beads' ready order. The handoff limits the allowed child set; it does not impose a static execution order. Non-ready children are skipped until Beads dependencies unblock them. By default, after a child task passes review, the CLI closes that Beads task with a reason pointing at the passing review artifact so downstream dependencies can become ready. Each child task receives its own Claude correction loop and Codex review. The generated review prompt scopes Codex to the current child task, so unfinished sibling tasks in the same Epic are not valid failure reasons for that child-task review. Use `--review-at-end` when you prefer one final full-Epic acceptance review instead of per-child reviews.
+When the target is a handoff slug or Beads Epic ID, YOLO treats the handoff as an Epic queue. At startup it reads the handoff child tasks and recovers progress from Beads children that are already closed, so retrying after an interrupted run does not lose completed-child progress. If a remaining handoff child is already marked `in_progress`, YOLO continues that child before consulting the ready queue; this handles runs interrupted after Beads moved a child out of `ready`. Before each other remaining child task it re-queries `bd ready --json`, intersects the ready set with the remaining handoff children, and selects the next ready child in Beads' ready order. The handoff limits the allowed child set; it does not impose a static execution order. Non-ready children are skipped until Beads dependencies unblock them. With default final-review scheduling, each child is closed after implementation with a "final review pending" reason so downstream dependencies can become ready before the final full-scope review. With `--review-each-task`, each child task receives its own worker correction loop and Codex review, and passing child tasks are closed with a reason pointing at the passing review artifact.
 
 Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 
@@ -168,6 +172,16 @@ humanize-flow config get claude.humanize
 humanize-flow config set claude.humanize required
 humanize-flow config get claude.env_file
 humanize-flow config set claude.env_file .humanize-flow/claude-provider.env
+humanize-flow config get worker.provider
+humanize-flow config set worker.provider codex
+humanize-flow config get worker.codex.model
+humanize-flow config set worker.codex.model gpt-5.5
+humanize-flow config get worker.codex.reasoning_effort
+humanize-flow config set worker.codex.reasoning_effort medium
+humanize-flow config get yolo.max_round
+humanize-flow config set yolo.max_round 5
+humanize-flow config get yolo.review_strategy
+humanize-flow config set yolo.review_strategy final
 humanize-flow config get codex.model
 humanize-flow config set codex.model gpt-5.5
 humanize-flow config get codex.reasoning_effort
@@ -305,6 +319,32 @@ If exactly one remote exists, the CLI uses it as the GitHub repository for `gh p
 
 The PR title and body follow the configured workflow language from `humanize-flow i18n` or `HUMANIZE_FLOW_LANGUAGE`. File paths, commands, labels, JSON keys, APIs, Beads IDs, branch names, and commit hashes stay canonical.
 
+## `humanize-flow pr-resolve`
+
+Integrate the PR target branch into the current branch and use Codex to resolve merge conflicts when Git stops on unmerged paths.
+
+```bash
+humanize-flow pr-resolve
+humanize-flow pr-resolve --base main
+humanize-flow pr-resolve --base main --no-fetch
+humanize-flow pr-resolve --base main --rebase
+```
+
+By default, the command fetches the target branch, runs `git merge --no-edit <target>`, and exits immediately if the merge is clean. If Git reports conflicts, it writes a conflict-resolution prompt under `.humanize-flow/runs/<timestamp>-pr-resolve/`, asks Codex to resolve only the target-branch conflicts, then checks that no unmerged paths or conflict markers remain in the conflicted files.
+
+The command is intentionally conservative: before starting a new merge or rebase, tracked working tree changes must be committed or stashed. Untracked local artifacts may remain unless Git refuses to overwrite them. If you already have a merge or rebase conflict in progress, `pr-resolve` detects it and resolves that existing conflict state instead of starting another integration.
+
+Options:
+
+- `--base <branch>`: target/base branch. Defaults to branch `gh-merge-base`, `origin/HEAD`, `main`, then `master`.
+- `--remote <name>`: remote to fetch the base branch from. Required in non-interactive mode when multiple remotes exist.
+- `--merge`: merge the target branch into the current branch. This is the default and does not rewrite feature-branch commits.
+- `--rebase`: rebase the current branch onto the target branch.
+- `--no-fetch`: skip fetching and use an existing local or remote-tracking base ref.
+- `--yolo`: run the Codex conflict resolver with yolo permissions.
+
+`pr-resolve` does not commit, push, create a PR, run `git merge --continue`, or run `git rebase --continue`. After it reports success, run the relevant checks, then create the merge-resolution commit or continue the rebase yourself.
+
 ## `humanize-flow status`
 
 Show a one-glance workflow status view.
@@ -332,6 +372,12 @@ The default view summarizes the repository state, latest Humanize Flow run/revie
 | `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` | Override the configured Claude Code permission mode. |
 | `HUMANIZE_FLOW_CLAUDE_HUMANIZE` | Override Claude Code humanize mode (`required`, `auto`, or `off`). |
 | `HUMANIZE_FLOW_CLAUDE_ENV_FILE` | Opt-in env file loaded into Claude Code worker runs. |
+| `HUMANIZE_FLOW_WORKER_PROVIDER` | Override worker provider (`claude` or `codex`). |
+| `HUMANIZE_FLOW_WORKER_CODEX_MODEL` | Override Codex worker model for YOLO runs. |
+| `HUMANIZE_FLOW_WORKER_CODEX_REASONING_EFFORT` | Override Codex worker reasoning effort for YOLO runs. |
+| `HUMANIZE_FLOW_WORKER_CODEX_ARGS` | Extra arguments for Codex worker `codex exec` calls. |
+| `HUMANIZE_FLOW_YOLO_MAX_ROUND` | Override default YOLO correction rounds. |
+| `HUMANIZE_FLOW_YOLO_REVIEW_STRATEGY` | Override YOLO review strategy (`final` or `each-task`). |
 | `HUMANIZE_FLOW_CODEX_MODEL` | Override the configured Codex model for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_CODEX_REASONING_EFFORT` | Override the configured Codex reasoning effort for planner/review/commit/pr runs. |
 | `HUMANIZE_FLOW_REVIEW_YOLO` | Override whether review/review-feedback pass Codex `--dangerously-bypass-approvals-and-sandbox`. |

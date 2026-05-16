@@ -4,8 +4,21 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.5.8] - 2026-05-16
+
+### Added
+
+- Add opt-in Codex worker execution for `run --yolo` via `worker.provider=codex`, with persistent `worker.codex.model` and `worker.codex.reasoning_effort` defaults (`gpt-5.5` / `medium`).
+- Add persistent YOLO defaults with `yolo.max_round` and `yolo.review_strategy`, including environment overrides.
+- Add `humanize-flow pr-resolve` to integrate a PR target branch and use Codex to resolve merge or rebase conflicts without committing or pushing.
+
+### Changed
+
+- Default `run --yolo` to final full-scope review scheduling and default `--max-round` to 5; use `--review-each-task` to restore per-child review cadence.
+
 ### Fixed
 
+- Make `scripts/package.sh <relative-output.zip>` write the archive relative to the caller's working directory instead of the script's temporary package directory.
 - Ignore root-level generated zip archives and remove tracked release archives from source control.
 
 ## [0.5.7] - 2026-05-11

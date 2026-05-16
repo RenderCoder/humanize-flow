@@ -2,11 +2,16 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.7"
+HF_VERSION="0.5.8"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
 HF_DEFAULT_CLAUDE_HUMANIZE="required"
+HF_DEFAULT_WORKER_PROVIDER="claude"
+HF_DEFAULT_WORKER_CODEX_MODEL="gpt-5.5"
+HF_DEFAULT_WORKER_CODEX_REASONING_EFFORT="medium"
+HF_DEFAULT_YOLO_MAX_ROUND="5"
+HF_DEFAULT_YOLO_REVIEW_STRATEGY="final"
 HF_DEFAULT_LANGUAGE="en"
 HF_DEFAULT_CODEX_MODEL=""
 HF_DEFAULT_CODEX_REASONING_EFFORT=""
@@ -39,7 +44,7 @@ Commands:
   approve SLUG [--materialize-bd]
                                Mark a handoff as approved; optionally create Beads tasks from it.
   materialize-bd SLUG          Create Beads epic/tasks from an approved handoff manifest.
-  run BD_ID_OR_SLUG [options]  Run Claude Code worker for one Beads task.
+  run BD_ID_OR_SLUG [options]  Run the configured worker for one Beads task.
   run-next                     Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
   review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
   review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE] [--review FILE]
@@ -48,6 +53,7 @@ Commands:
   commit [--yes]               Use Codex to select changes, write a Lore message, and commit.
   push [--remote NAME]         Push the current branch, prompting for a remote when needed.
   pr [options]                 Use Codex to draft a professional PR and create it with GitHub CLI.
+  pr-resolve [options]         Merge or rebase the PR target branch and ask Codex to resolve conflicts.
   i18n [LANG]                  Show or set artifact language (en, zh).
   status [--ai|--explain|--json]
                                Show one-glance workflow status, logs, queue state, and next actions.
@@ -63,6 +69,15 @@ Environment:
                                Override Claude Code permission mode for worker runs.
   HUMANIZE_FLOW_CLAUDE_HUMANIZE
                                Override Claude Code humanize mode (required, auto, off).
+  HUMANIZE_FLOW_WORKER_PROVIDER
+                               Override worker provider (claude, codex).
+  HUMANIZE_FLOW_WORKER_CODEX_MODEL
+                               Override Codex worker model for YOLO runs.
+  HUMANIZE_FLOW_WORKER_CODEX_REASONING_EFFORT
+                               Override Codex worker reasoning effort for YOLO runs.
+  HUMANIZE_FLOW_YOLO_MAX_ROUND Override default YOLO correction rounds.
+  HUMANIZE_FLOW_YOLO_REVIEW_STRATEGY
+                               Override YOLO review strategy (final, each-task).
   HUMANIZE_FLOW_CODEX_MODEL    Override Codex model for planner/review/commit/pr runs.
   HUMANIZE_FLOW_CODEX_REASONING_EFFORT
                                Override Codex reasoning effort for planner/review/commit/pr runs.
@@ -87,6 +102,7 @@ Examples:
   humanize-flow commit
   humanize-flow push
   humanize-flow pr --base main
+  humanize-flow pr-resolve --base main
 EOF
 }
 
@@ -265,6 +281,54 @@ review_yolo_default() {
 
 claude_env_file_default() {
   config_get "claude.env_file" "" "HUMANIZE_FLOW_CLAUDE_ENV_FILE"
+}
+
+normalize_worker_provider() {
+  case "$1" in
+    claude|Claude|CLAUDE) printf 'claude\n' ;;
+    codex|Codex|CODEX) printf 'codex\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+worker_provider_default() {
+  local raw normalized
+  raw="$(config_get "worker.provider" "$HF_DEFAULT_WORKER_PROVIDER" "HUMANIZE_FLOW_WORKER_PROVIDER")"
+  normalized="$(normalize_worker_provider "$raw")" || die "Unsupported worker provider: $raw (supported: claude, codex)"
+  printf '%s\n' "$normalized"
+}
+
+worker_codex_model_default() {
+  config_get "worker.codex.model" "$HF_DEFAULT_WORKER_CODEX_MODEL" "HUMANIZE_FLOW_WORKER_CODEX_MODEL"
+}
+
+worker_codex_reasoning_effort_default() {
+  config_get "worker.codex.reasoning_effort" "$HF_DEFAULT_WORKER_CODEX_REASONING_EFFORT" "HUMANIZE_FLOW_WORKER_CODEX_REASONING_EFFORT"
+}
+
+yolo_max_round_default() {
+  local raw
+  raw="$(config_get "yolo.max_round" "$HF_DEFAULT_YOLO_MAX_ROUND" "HUMANIZE_FLOW_YOLO_MAX_ROUND")"
+  case "$raw" in
+    ''|*[!0-9]*) die "Unsupported yolo.max_round value: $raw (must be a positive integer)" ;;
+  esac
+  [ "$raw" -ge 1 ] || die "Unsupported yolo.max_round value: $raw (must be at least 1)"
+  printf '%s\n' "$raw"
+}
+
+normalize_yolo_review_strategy() {
+  case "$1" in
+    final|review-at-end|final-review-only) printf 'final\n' ;;
+    each-task|each|per-task|per_task) printf 'each-task\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+yolo_review_strategy_default() {
+  local raw normalized
+  raw="$(config_get "yolo.review_strategy" "$HF_DEFAULT_YOLO_REVIEW_STRATEGY" "HUMANIZE_FLOW_YOLO_REVIEW_STRATEGY")"
+  normalized="$(normalize_yolo_review_strategy "$raw")" || die "Unsupported yolo.review_strategy value: $raw (supported: final, each-task)"
+  printf '%s\n' "$normalized"
 }
 
 normalize_reasoning_effort() {
@@ -458,6 +522,26 @@ run_codex_exec() {
   fi
 }
 
+run_codex_worker_exec() {
+  local prompt model reasoning
+  local args
+  prompt="${1:-}"
+  model="$(worker_codex_model_default)"
+  [ -n "$model" ] || die "worker.codex.model cannot be empty."
+  reasoning="$(worker_codex_reasoning_effort_default)"
+  reasoning="$(normalize_reasoning_effort "$reasoning")" || die "Unsupported worker Codex reasoning effort: $reasoning (supported: low, medium, high, xhigh)"
+  [ -n "$reasoning" ] || die "worker.codex.reasoning_effort cannot be empty."
+
+  args=(exec --dangerously-bypass-approvals-and-sandbox --model "$model" -c "model_reasoning_effort=\"$reasoning\"")
+  if [ -n "${HUMANIZE_FLOW_WORKER_CODEX_ARGS:-}" ]; then
+    # shellcheck disable=SC2206
+    # shellcheck disable=SC2086
+    codex "${args[@]}" ${HUMANIZE_FLOW_WORKER_CODEX_ARGS} "$prompt"
+  else
+    codex "${args[@]}" "$prompt"
+  fi
+}
+
 format_claude_stream_json() {
   python3 -c "$(cat <<'PY'
 import json
@@ -591,6 +675,11 @@ claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
 claude.humanize: $(claude_humanize_default)
 claude.env_file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")
+worker.provider: $(worker_provider_default)
+worker.codex.model: $(worker_codex_model_default)
+worker.codex.reasoning_effort: $(worker_codex_reasoning_effort_default)
+yolo.max_round: $(yolo_max_round_default)
+yolo.review_strategy: $(yolo_review_strategy_default)
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
 review.yolo: $(review_yolo_default)
@@ -605,6 +694,11 @@ EOF
         claude.permission_mode) claude_permission_mode_default ;;
         claude.humanize) claude_humanize_default ;;
         claude.env_file) claude_env_file_default ;;
+        worker.provider) worker_provider_default ;;
+        worker.codex.model) worker_codex_model_default ;;
+        worker.codex.reasoning_effort) worker_codex_reasoning_effort_default ;;
+        yolo.max_round) yolo_max_round_default ;;
+        yolo.review_strategy) yolo_review_strategy_default ;;
         codex.model) codex_model_default ;;
         codex.reasoning_effort) codex_reasoning_effort_default ;;
         review.yolo) review_yolo_default ;;
@@ -644,7 +738,26 @@ EOF
           normalized="$(normalize_claude_env_file_value "$value")"
           value="$normalized"
           ;;
-        claude.model|codex.model) ;;
+        worker.provider)
+          normalized="$(normalize_worker_provider "$value")" || die "Unsupported worker provider: $value (supported: claude, codex)"
+          value="$normalized"
+          ;;
+        worker.codex.reasoning_effort)
+          normalized="$(normalize_reasoning_effort "$value")" || die "Unsupported worker Codex reasoning effort: $value (supported: low, medium, high, xhigh)"
+          [ -n "$normalized" ] || die "worker.codex.reasoning_effort cannot be empty."
+          value="$normalized"
+          ;;
+        yolo.max_round)
+          case "$value" in
+            ''|*[!0-9]*) die "Unsupported yolo.max_round value: $value (must be a positive integer)" ;;
+          esac
+          [ "$value" -ge 1 ] || die "Unsupported yolo.max_round value: $value (must be at least 1)"
+          ;;
+        yolo.review_strategy)
+          normalized="$(normalize_yolo_review_strategy "$value")" || die "Unsupported yolo.review_strategy value: $value (supported: final, each-task)"
+          value="$normalized"
+          ;;
+        claude.model|codex.model|worker.codex.model) ;;
         *) die "Unsupported config key: $key" ;;
       esac
       json_set "$file" "$key" "$value"
@@ -663,6 +776,16 @@ Usage:
   humanize-flow config set claude.humanize required
   humanize-flow config get claude.env_file
   humanize-flow config set claude.env_file .humanize-flow/claude-provider.env
+  humanize-flow config get worker.provider
+  humanize-flow config set worker.provider codex
+  humanize-flow config get worker.codex.model
+  humanize-flow config set worker.codex.model gpt-5.5
+  humanize-flow config get worker.codex.reasoning_effort
+  humanize-flow config set worker.codex.reasoning_effort medium
+  humanize-flow config get yolo.max_round
+  humanize-flow config set yolo.max_round 5
+  humanize-flow config get yolo.review_strategy
+  humanize-flow config set yolo.review_strategy final
   humanize-flow config get codex.model
   humanize-flow config set codex.model gpt-5.5
   humanize-flow config get codex.reasoning_effort
@@ -796,6 +919,11 @@ claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
 claude.humanize: $(claude_humanize_default)
 claude.env_file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")
+worker.provider: $(worker_provider_default)
+worker.codex.model: $(worker_codex_model_default)
+worker.codex.reasoning_effort: $(worker_codex_reasoning_effort_default)
+yolo.max_round: $(yolo_max_round_default)
+yolo.review_strategy: $(yolo_review_strategy_default)
 codex.model: $(display_optional_config "$(codex_model_default)" "(codex default)")
 codex.reasoning_effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")
 review.yolo: $(review_yolo_default)
@@ -814,6 +942,11 @@ cmd_doctor() {
   info "claude permission mode: $(claude_permission_mode_default)"
   info "claude humanize: $(claude_humanize_default)"
   info "claude env file: $(display_optional_config "$(claude_env_file_default)" "(disabled)")"
+  info "worker provider: $(worker_provider_default)"
+  info "worker codex model: $(worker_codex_model_default)"
+  info "worker codex reasoning effort: $(worker_codex_reasoning_effort_default)"
+  info "yolo max round: $(yolo_max_round_default)"
+  info "yolo review strategy: $(yolo_review_strategy_default)"
   info "codex model: $(display_optional_config "$(codex_model_default)" "(codex default)")"
   info "codex reasoning effort: $(display_optional_config "$(codex_reasoning_effort_default)" "(codex default)")"
   info "review yolo: $(review_yolo_default)"
@@ -2133,17 +2266,84 @@ EOF
   fi
 }
 
+cmd_run_codex_once() {
+  require_git_repo
+  local ref bd_id slug file latest_review latest_review_display plan_path plan_display acceptance_path acceptance_display run_dir prompt_file final_file prompt_text
+  ref="$1"
+  [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
+  command_exists codex || die "codex CLI not found."
+  command_exists bd || warn "bd CLI not found; worker prompt will still reference task id."
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  [ -n "$slug" ] || die "Codex worker requires an approved Humanize Flow handoff for: $ref"
+  ensure_approved_handoff_for_slug "$slug"
+  bd_id="$(bd_id_for_ref_and_slug "$ref" "$slug" 2>/dev/null || true)"
+  [ -n "$bd_id" ] || bd_id="$ref"
+  file="$(handoff_path "$slug")"
+  latest_review="$(latest_review_for_slug "$slug" "$bd_id" 2>/dev/null || true)"
+  if [ -z "$latest_review" ] && [ "$ref" != "$bd_id" ]; then
+    latest_review="$(latest_review_for_slug "$slug" "$ref" 2>/dev/null || true)"
+  fi
+  if [ -n "$latest_review" ]; then latest_review_display="$(repo_relative_path "$latest_review")"; else latest_review_display="not-found"; fi
+  plan_path="$(handoff_artifact_path "$slug" "plan" 2>/dev/null || true)"
+  if [ -n "$plan_path" ]; then plan_display="$(repo_relative_path "$plan_path")"; else plan_display="not-found"; fi
+  acceptance_path="$(handoff_artifact_path "$slug" "acceptance" 2>/dev/null || true)"
+  if [ -n "$acceptance_path" ]; then acceptance_display="$(repo_relative_path "$acceptance_path")"; else acceptance_display="not-found"; fi
+
+  run_dir="$(state_dir)/runs/$(timestamp)-run-$bd_id"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/codex-worker-prompt.md"
+  final_file="$run_dir/codex-worker-final.md"
+
+  cat > "$prompt_file" <<EOF
+You are the Codex implementer in the Humanize Flow workflow.
+
+Task id: $bd_id
+Handoff slug: $slug
+Handoff path: $(repo_relative_path "$file")
+Plan path: $plan_display
+Acceptance path: $acceptance_display
+Latest review path: $latest_review_display
+Repository root: $(repo_root)
+
+$(language_instruction)
+
+Required behavior:
+- Implement this approved task directly; do not start humanize/RLCR or invoke any humanize skill.
+- Read the Beads task with: bd show $bd_id --json
+- Read the approved handoff, plan, and acceptance criteria before implementing.
+- If the approved handoff, plan, or acceptance criteria cannot be found, stop and report the missing artifact instead of implementing from the brief Beads task alone.
+- If the latest review path is not "not-found", read that review as the current correction target before editing.
+- Do not bulk-load docs/humanize-flow/$slug/reviews/ or older review reports. Inspect older reviews only when the latest review explicitly references them or the user asks for review history.
+- Do not expand scope beyond this task unless this run is a final full-scope correction for the handoff/Epic target.
+- Run relevant tests.
+- Write an implementation summary under docs/humanize-flow/$slug/implementation/.
+- Update Beads notes/status with what changed, tests run, and remaining risks when bd is available.
+- Stop with a clear summary and request Codex review via: humanize-flow review $bd_id
+- Preserve the Humanize Flow Codex review boundary: do not self-approve, do not mark review passed, and do not run delivery commands.
+EOF
+
+  info "worker prompt: $prompt_file"
+  info "starting Codex worker session"
+  info "model: $(worker_codex_model_default)"
+  info "reasoning effort: $(worker_codex_reasoning_effort_default)"
+  info "humanize mode: off (Codex worker does not run humanize)"
+  info "human-readable log: $final_file"
+  prompt_text="$(cat "$prompt_file")"
+  run_codex_worker_exec "$prompt_text" | tee "$final_file"
+}
+
 cmd_run_yolo() {
   require_git_repo
-  local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay review_strategy slug
+  local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay review_strategy worker_provider slug
   local epic_scope child_ids target_ids target_count completed_csv completed_count
   local target_index target_id ready_ids active_ids round latest_review verdict hint
-  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"; review_strategy="${12:-each-task}"
+  ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"; review_strategy="${12:-final}"; worker_provider="${13:-claude}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
   case "$review_strategy" in
     each-task|final) ;;
     *) die "Unsupported YOLO review strategy: $review_strategy" ;;
   esac
+  worker_provider="$(normalize_worker_provider "$worker_provider")" || die "Unsupported worker provider: $worker_provider (supported: claude, codex)"
   case "$max_round" in
     ''|*[!0-9]*) die "--max-round must be a positive integer." ;;
   esac
@@ -2179,6 +2379,7 @@ cmd_run_yolo() {
     info "target count: $target_count"
   fi
   info "max rounds: $max_round"
+  info "worker provider: $worker_provider"
   if [ "$review_strategy" = "final" ]; then
     info "review strategy: final full-scope review after all child tasks"
   else
@@ -2186,7 +2387,7 @@ cmd_run_yolo() {
   fi
   info "phase retry: $retry attempt(s), ${retry_delay}s delay"
   info "humanize mode: off (forced by --yolo to avoid nested review loops)"
-  info "human verification gate: YOLO automates Claude work and Codex review only; after a pass review, run humanize-flow verify <task-id> after manual testing before commit/push/pr."
+  info "human verification gate: YOLO automates worker implementation and Codex review only; after a pass review, run humanize-flow verify <task-id> after manual testing before commit/push/pr."
   hint="$(yolo_retry_hint "$ref" "$max_round" "$retry" "$retry_delay" "$review_strategy")"
   completed_csv=""
   completed_count=0
@@ -2219,8 +2420,12 @@ cmd_run_yolo() {
         info "YOLO target $target_index/$target_count selected from bd ready: $target_id"
       fi
       if [ "$review_strategy" = "final" ]; then
-        info "YOLO target $target_index/$target_count: Claude Code worker"
-        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+        info "YOLO target $target_index/$target_count: $worker_provider worker"
+        if [ "$worker_provider" = "codex" ]; then
+          if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex worker" "$target_id" cmd_run_codex_once "$target_id"; then
+            die "YOLO Codex worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+          fi
+        elif ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
           die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
         fi
         if ! yolo_phase_with_retries "$retry" "$retry_delay" "close implemented Beads task" "$target_id" yolo_mark_child_implemented "$target_id"; then
@@ -2242,8 +2447,12 @@ cmd_run_yolo() {
       fi
       round=1
       while [ "$round" -le "$max_round" ]; do
-        info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
-        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+        info "YOLO target $target_index/$target_count round $round/$max_round: $worker_provider worker"
+        if [ "$worker_provider" = "codex" ]; then
+          if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex worker" "$target_id" cmd_run_codex_once "$target_id"; then
+            die "YOLO Codex worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+          fi
+        elif ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
           die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
         fi
         info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
@@ -2301,7 +2510,11 @@ cmd_run_yolo() {
               die "YOLO final-review mode reached max rounds ($max_round) for $ref without a passing final review. Latest review: $latest_review"
             fi
             info "YOLO mode will run a full-scope correction round using latest final review: $(repo_relative_path "$latest_review")"
-            if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code final correction" "$ref" cmd_run_once "$ref" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+            if [ "$worker_provider" = "codex" ]; then
+              if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex final correction" "$ref" cmd_run_codex_once "$ref"; then
+                die "YOLO final correction failed for $ref. Network or provider issues do not consume a correction round. Retry later with: $hint"
+              fi
+            elif ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code final correction" "$ref" cmd_run_once "$ref" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
               die "YOLO final correction failed for $ref. Network or provider issues do not consume a correction round. Retry later with: $hint"
             fi
             ;;
@@ -2326,8 +2539,12 @@ cmd_run_yolo() {
     fi
     round=1
     while [ "$round" -le "$max_round" ]; do
-      info "YOLO target $target_index/$target_count round $round/$max_round: Claude Code worker"
-      if ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
+      info "YOLO target $target_index/$target_count round $round/$max_round: $worker_provider worker"
+      if [ "$worker_provider" = "codex" ]; then
+        if ! yolo_phase_with_retries "$retry" "$retry_delay" "Codex worker" "$target_id" cmd_run_codex_once "$target_id"; then
+          die "YOLO Codex worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
+        fi
+      elif ! yolo_phase_with_retries "$retry" "$retry_delay" "Claude Code worker" "$target_id" cmd_run_once "$target_id" "print" "$model" "bypassPermissions" "$output_format" "$verbose" "$partial" "$hook_events" "off" "$claude_env_file"; then
         die "YOLO Claude worker failed for $target_id. Network or provider issues do not consume a review round. Retry later with: $hint"
       fi
       info "YOLO target $target_index/$target_count round $round/$max_round: Codex review"
@@ -2363,11 +2580,12 @@ cmd_run_yolo() {
 
 cmd_run() {
   require_git_repo
-  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay review_strategy
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay review_strategy review_strategy_explicit worker_provider
   ref=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
   humanize_mode="$(claude_humanize_default)"
   claude_env_file="$(claude_env_file_default)"
-  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round=3; retry=3; retry_delay=10; review_strategy="each-task"
+  worker_provider="$(worker_provider_default)"
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round="$(yolo_max_round_default)"; retry=3; retry_delay=10; review_strategy="$(yolo_review_strategy_default)"; review_strategy_explicit=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --interactive|-i) mode="interactive" ;;
@@ -2379,8 +2597,9 @@ cmd_run() {
       --env-file|--claude-env-file) shift; claude_env_file="${1:-}" ;;
       --no-env-file) claude_env_file="" ;;
       --yolo) yolo=1; permission_mode="bypassPermissions"; humanize_mode="off" ;;
-      --review-at-end|--final-review-only) review_strategy="final" ;;
-      --review-each-task) review_strategy="each-task" ;;
+      --review-at-end|--final-review-only) review_strategy="final"; review_strategy_explicit=1 ;;
+      --review-each-task) review_strategy="each-task"; review_strategy_explicit=1 ;;
+      --worker-provider) shift; worker_provider="${1:-}" ;;
       --max-round) shift; max_round="${1:-}" ;;
       --retry) shift; retry="${1:-}" ;;
       --retry-delay) shift; retry_delay="${1:-}" ;;
@@ -2398,6 +2617,7 @@ BD_ID_OR_SLUG may be either a Beads task id or a Humanize Flow handoff slug.
 
 Options:
   --interactive, -i          Open a Claude Code interactive session instead of print mode.
+  --worker-provider PROVIDER Override configured worker provider: claude or codex.
   --model MODEL              Override the configured Claude model for this run.
   --permission-mode MODE     Override the configured Claude permission mode for this run.
   --humanize                 Require humanize/RLCR for this run.
@@ -2405,11 +2625,11 @@ Options:
   --humanize-mode MODE       Set humanize mode: required, auto, or off.
   --env-file FILE            Load Claude Code provider/auth env vars from FILE for this run.
   --no-env-file              Ignore configured HUMANIZE_FLOW_CLAUDE_ENV_FILE / claude.env_file.
-  --yolo                     Run Claude+Codex review loop until pass or max rounds. Forces --humanize-mode off.
+  --yolo                     Run worker+Codex review loop until pass or max rounds. Forces --humanize-mode off.
   --review-at-end            With --yolo Epic/handoff runs, skip per-child reviews and run one final full-scope review.
   --final-review-only        Alias for --review-at-end.
-  --review-each-task         With --yolo, review each completed task. This is the default.
-  --max-round N              Maximum YOLO correction rounds. Default: 3.
+  --review-each-task         With --yolo, review each completed task.
+  --max-round N              Maximum YOLO correction rounds. Default: configured yolo.max_round (5 if unset).
   --retry N                  YOLO phase retry attempts for transient command failures. Default: 3.
   --retry-delay SECONDS      Delay between YOLO phase retries. Default: 10.
   --text                     Use Claude text output instead of detailed stream-json.
@@ -2427,17 +2647,19 @@ EOF
     shift
   done
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
+  worker_provider="$(normalize_worker_provider "$worker_provider")" || die "Unsupported worker provider: $worker_provider (supported: claude, codex)"
   [ -n "$model" ] || die "Claude model cannot be empty."
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
   humanize_mode="$(normalize_humanize_mode "$humanize_mode")" || die "Unsupported Claude humanize mode: $humanize_mode (supported: required, auto, off)"
   claude_env_file="$(normalize_claude_env_file_value "$claude_env_file")"
-  if [ "$review_strategy" = "final" ] && [ "$yolo" -ne 1 ]; then
+  if [ "$review_strategy_explicit" -eq 1 ] && [ "$review_strategy" = "final" ] && [ "$yolo" -ne 1 ]; then
     die "--review-at-end requires --yolo."
   fi
   if [ "$yolo" -eq 1 ]; then
     [ "$mode" != "interactive" ] || die "YOLO mode does not support --interactive."
-    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file" "$retry" "$retry_delay" "$review_strategy"
+    cmd_run_yolo "$ref" "$max_round" "$model" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file" "$retry" "$retry_delay" "$review_strategy" "$worker_provider"
   else
+    [ "$worker_provider" = "claude" ] || die "worker.provider=codex currently supports only run --yolo."
     cmd_run_once "$ref" "$mode" "$model" "$permission_mode" "$output_format" "$verbose" "$partial" "$hook_events" "$humanize_mode" "$claude_env_file"
   fi
 }
@@ -3547,6 +3769,208 @@ guess_pr_base() {
   printf 'main\n'
 }
 
+git_unmerged_paths() {
+  git diff --name-only --diff-filter=U
+}
+
+git_integration_state() {
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+  if [ -n "$git_dir" ] && [ -d "$git_dir/rebase-merge" -o -d "$git_dir/rebase-apply" ]; then
+    printf 'rebase\n'
+    return 0
+  fi
+  if [ -n "$git_dir" ] && [ -f "$git_dir/MERGE_HEAD" ]; then
+    printf 'merge\n'
+    return 0
+  fi
+  if [ -n "$(git_unmerged_paths)" ]; then
+    printf 'conflict\n'
+    return 0
+  fi
+  printf 'none\n'
+}
+
+cmd_pr_resolve() {
+  require_git_repo
+  local base="" remote="" strategy="merge" no_fetch=0 yolo=0 branch state target_ref run_dir prompt_file final_file log_file conflicts_file marker_file prompt_text conflicts_before conflicts_after integrate_status integrate_cmd path
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) shift; base="${1:-}" ;;
+      --remote) shift; remote="${1:-}" ;;
+      --merge) strategy="merge" ;;
+      --rebase) strategy="rebase" ;;
+      --no-fetch) no_fetch=1 ;;
+      --yolo) yolo=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow pr-resolve [--base BRANCH] [--remote NAME] [--merge|--rebase] [--no-fetch] [--yolo]
+
+Integrates the PR target branch into the current branch, then asks Codex to
+resolve merge conflicts if Git stops with unmerged paths. The command does not
+commit, push, create a PR, run git merge --continue, or run git rebase --continue.
+
+Options:
+  --base BRANCH   Target/base branch. Defaults to branch gh-merge-base,
+                  origin/HEAD, main, then master.
+  --remote NAME   Remote to fetch the base branch from. Required in
+                  non-interactive mode when multiple remotes exist.
+  --merge         Merge the target branch into the current branch. Default.
+  --rebase        Rebase the current branch onto the target branch.
+  --no-fetch      Do not fetch before integrating; use an existing local or
+                  remote-tracking base ref.
+  --yolo          Run the Codex conflict resolver with yolo permissions.
+EOF
+        return 0 ;;
+      *) die "Unknown pr-resolve option: $1" ;;
+    esac
+    shift
+  done
+
+  command_exists codex || die "codex CLI not found."
+  branch="$(git branch --show-current)"
+  [ -n "$branch" ] || die "Cannot determine current branch."
+  if [ -z "$base" ]; then base="$(guess_pr_base)"; fi
+  [ "$branch" != "$base" ] || die "Current branch '$branch' matches base '$base'; switch to a PR branch before resolving target conflicts."
+
+  state="$(git_integration_state)"
+  if [ "$state" = "none" ]; then
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+      die "Tracked working tree changes must be committed or stashed before starting PR target-branch integration, or resolve the existing conflict state first."
+    fi
+  else
+    info "detected existing $state state; resolving current unmerged paths instead of starting a new integration."
+  fi
+
+  run_dir="$(state_dir)/runs/$(timestamp)-pr-resolve"
+  mkdir -p "$run_dir"
+  prompt_file="$run_dir/codex-pr-resolve-prompt.md"
+  final_file="$run_dir/codex-pr-resolve-final.md"
+  log_file="$run_dir/git-pr-resolve.log"
+  conflicts_file="$run_dir/conflicted-files.txt"
+  marker_file="$run_dir/remaining-conflict-markers.txt"
+
+  target_ref="$base"
+  if [ "$state" = "none" ]; then
+    if [ "$no_fetch" -ne 1 ]; then
+      remote="$(select_git_remote "$remote" "PR target conflict resolution")"
+      info "fetching $base from $remote"
+      git fetch "$remote" "$base" > "$log_file" 2>&1 || {
+        cat "$log_file" >&2
+        die "Failed to fetch $base from $remote. Log: $log_file"
+      }
+      target_ref="FETCH_HEAD"
+      if git show-ref --verify --quiet "refs/remotes/$remote/$base"; then
+        target_ref="$remote/$base"
+      fi
+    elif [ -n "$remote" ] && git show-ref --verify --quiet "refs/remotes/$remote/$base"; then
+      target_ref="$remote/$base"
+    elif git show-ref --verify --quiet "refs/remotes/origin/$base"; then
+      target_ref="origin/$base"
+    fi
+
+    info "integrating target branch $target_ref into $branch with $strategy"
+    set +e
+    if [ "$strategy" = "rebase" ]; then
+      integrate_cmd="git rebase $target_ref"
+      git rebase "$target_ref" >> "$log_file" 2>&1
+    else
+      integrate_cmd="git merge --no-edit $target_ref"
+      git merge --no-edit "$target_ref" >> "$log_file" 2>&1
+    fi
+    integrate_status=$?
+    set -e
+    if [ "$integrate_status" -eq 0 ]; then
+      info "target branch integrated cleanly; log: $log_file"
+      return 0
+    fi
+  else
+    integrate_cmd="existing $state state"
+    git status --short --untracked-files=all > "$log_file"
+  fi
+
+  conflicts_before="$(git_unmerged_paths)"
+  [ -n "$conflicts_before" ] || {
+    cat "$log_file" >&2
+    die "Integration failed but Git does not report unmerged paths. Log: $log_file"
+  }
+  printf '%s\n' "$conflicts_before" > "$conflicts_file"
+
+  cat > "$prompt_file" <<EOF
+You are resolving PR target branch conflicts in this repository.
+
+Current branch: $branch
+Target/base branch: $base
+Target ref used: $target_ref
+Integration strategy: $strategy
+Integration command: $integrate_cmd
+Git integration log: $log_file
+Conflicted files list: $conflicts_file
+
+$(language_instruction)
+
+Inspect:
+- git status --short --untracked-files=all
+- git diff --name-only --diff-filter=U
+- git diff --cc
+- git diff --ours -- <conflicted files>
+- git diff --theirs -- <conflicted files>
+- git log --oneline --left-right --merge
+- The conflicted files themselves, including conflict markers.
+- Relevant tests and nearby code needed to preserve behavior.
+- AGENTS.md and CLAUDE.md when present.
+
+Rules:
+- Resolve only the merge/rebase conflicts caused by integrating the PR target branch.
+- Preserve the intended behavior from both the PR branch and the target branch when they are compatible.
+- If behavior is genuinely incompatible, choose the smallest coherent resolution and explain the tradeoff.
+- Do not broaden feature scope, rewrite unrelated code, or reformat unrelated files.
+- Remove all conflict markers.
+- Stage nothing unless staging is required by a tool you run; do not commit.
+- Do not run git merge --continue, git rebase --continue, git commit, git push, gh pr create, git reset, git checkout --, git restore, or git clean.
+- Run focused tests or static checks when practical. If you cannot run them, explain why.
+
+At the end, report:
+- Files resolved.
+- Behavioral choices made for each non-trivial conflict.
+- Verification commands run and outcomes.
+- Any remaining manual steps, especially whether the user should run git commit for merge or git rebase --continue for rebase.
+EOF
+
+  info "conflict resolver prompt: $prompt_file"
+  prompt_text="$(cat "$prompt_file")"
+  if [ "$yolo" -eq 1 ]; then
+    run_codex_exec --yolo "$prompt_text" | tee "$final_file"
+  else
+    run_codex_exec "$prompt_text" | tee "$final_file"
+  fi
+
+  conflicts_after="$(git_unmerged_paths)"
+  if [ -n "$conflicts_after" ]; then
+    printf '%s\n' "$conflicts_after" > "$run_dir/remaining-conflicted-files.txt"
+    die "Codex returned but unmerged paths remain. See $run_dir/remaining-conflicted-files.txt and $final_file"
+  fi
+  : > "$marker_file"
+  while IFS= read -r path || [ -n "$path" ]; do
+    [ -n "$path" ] || continue
+    [ -f "$path" ] || continue
+    grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- "$path" | sed "s#^#$path:#" >> "$marker_file" || true
+  done <<EOF
+$conflicts_before
+EOF
+  if [ -s "$marker_file" ]; then
+    die "Conflict marker scan found remaining markers. See $marker_file"
+  fi
+
+  info "conflicts resolved; Codex report: $final_file"
+  if [ "$strategy" = "rebase" ] || [ "$state" = "rebase" ]; then
+    info "next step: run tests, stage resolved files if needed, then git rebase --continue"
+  else
+    info "next step: run tests, then create the merge-resolution commit when ready"
+  fi
+}
+
 cmd_pr() {
   require_git_repo
   local base="" head="" draft=0 dry_run=0 yes=0 push_first=0 remote="" pr_remote="" pr_repo="" run_dir prompt_file draft_file title_file body_file guides_file pr_output_file pr_error_file pr_url_file prompt_text branch merge_base pr_output pr_url answer pr_status
@@ -3933,7 +4357,7 @@ def classify_run(path):
     files = {p.name: p for p in path.iterdir() if p.is_file()} if path.is_dir() else {}
     status = 'unknown'
     evidence = []
-    final = files.get('claude-final.md')
+    final = files.get('claude-final.md') or files.get('codex-worker-final.md')
     raw = files.get('claude-final.jsonl')
     review_prompt = files.get('codex-reviewer-prompt.md')
     feedback_prompt = files.get('codex-review-feedback-prompt.md')
@@ -3941,7 +4365,7 @@ def classify_run(path):
     pr_url = files.get('pr-url.txt')
     if final and final.exists():
         text = final.read_text(encoding='utf-8', errors='replace')[-20000:]
-        if re.search(r'\[result\]\s+success|"subtype"\s*:\s*"success"', text):
+        if re.search(r'\[result\]\s+success|"subtype"\s*:\s*"success"|Codex worker implemented', text):
             status = 'completed'
         if re.search(r'ERROR|Blocker|blocked|cannot proceed|denied|temporarily unavailable|reached max rounds', text, re.I):
             status = 'needs_attention'
@@ -4126,10 +4550,10 @@ if latest_review:
 if ready:
     first_ready = ready[0]
     if first_ready.get('handoff'):
-        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 3")
-        next_actions.append(f"Continue the handoff/Epic queue: humanize-flow run {first_ready['handoff']} --yolo --max-round 3")
+        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 5")
+        next_actions.append(f"Continue the handoff/Epic queue: humanize-flow run {first_ready['handoff']} --yolo --max-round 5")
     else:
-        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 3")
+        next_actions.append(f"Continue ready work: humanize-flow run {first_ready['id']} --yolo --max-round 5")
         next_actions.append("Or pick interactively: humanize-flow run-next")
 if inner_rlcr and latest_review and inner_rlcr[0].get('latest_signal') == 'REQUEST_CHANGES' and latest_review.get('verdict') == 'pass':
     warnings.append('Inner humanize/RLCR latest review requested changes, but the outer Humanize Flow review passed. Treat outer docs/humanize-flow review as the task-close gate unless you intentionally enabled nested RLCR.')
@@ -4358,6 +4782,7 @@ main() {
     commit) cmd_commit "$@" ;;
     push) cmd_push "$@" ;;
     pr) cmd_pr "$@" ;;
+    pr-resolve|resolve-pr) cmd_pr_resolve "$@" ;;
     status) cmd_status "$@" ;;
     config) cmd_config "$@" ;;
     i18n) cmd_i18n "$@" ;;

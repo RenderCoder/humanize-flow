@@ -8,6 +8,7 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 - Worker 需要已批准 handoff。
 - Reviewer 不实现修复。
 - Planner、commit、PR 和 worker 流程默认不会完全绕过 Codex sandbox。
+- Codex worker 需要显式设置 `worker.provider=codex`，只支持 `run --yolo`，并使用 Codex yolo 权限，因为实现阶段需要无人值守执行。
 - Codex review 和 review-feedback 默认使用 yolo 模式，也就是 `--dangerously-bypass-approvals-and-sandbox`，避免 review 循环被权限提示阻塞。
 - Claude Code worker 默认使用权限模式 `bypassPermissions`，这样已批准的自动化不会被 Claude Code 权限提示或 auto classifier 临时不可用阻塞。
 - Claude Code worker 默认使用 `claude.humanize=required`；如果 humanize 不可用，应显式降低模式，而不是静默绕过循环。
@@ -31,6 +32,8 @@ humanize-flow 会协调能读取文件、写入文件和运行命令的工具。
 Claude Code worker 默认权限模式是 `bypassPermissions`，这样 Humanize Flow handoff 被批准之后，任务可以全自动执行。这个默认值只适合你信任的仓库和 worktree。需要让 Claude Code 的 auto classifier 继续做动作门禁时，可用 `humanize-flow run <id> --permission-mode auto`、`HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE=auto` 或 `humanize-flow config set claude.permission_mode auto` 降低权限。
 
 默认 humanize 模式是 `required`。这意味着 `humanize-flow run` 会预检 humanize 命令、Claude 插件或已安装的 Codex humanize skill 脚本，worker prompt 会要求 Claude 在改代码前启动 humanize/RLCR。需要建议模式时使用 `humanize-flow config set claude.humanize auto`；只有明确希望直接实现并交给 Humanize Flow review 时才设为 `off`。
+
+Codex worker 模式不会运行 humanize/RLCR。只有在你明确希望 `run --yolo` 消耗 Codex 额度而不是 Claude Code 额度时才使用：`humanize-flow config set worker.provider codex`。它仍保留最终 Codex review 和人工验证门禁，但实现和 review 都是 Codex 系列调用，因此人工验证指南必须认真执行。
 
 可以通过 `HUMANIZE_FLOW_CLAUDE_PERMISSION_MODE` 或 `humanize-flow config set claude.permission_mode <mode>` 匹配你的本地权限策略。
 

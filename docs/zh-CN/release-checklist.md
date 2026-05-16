@@ -7,6 +7,12 @@ make test
 make package
 ```
 
+如果默认的 `humanize-flow.zip` 已存在，改用带版本号的归档路径：
+
+```bash
+bash scripts/package.sh humanize-flow-0.5.8.zip
+```
+
 然后检查：
 
 ```bash
