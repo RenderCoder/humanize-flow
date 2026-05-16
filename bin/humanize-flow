@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.8"
+HF_VERSION="0.5.9"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -52,6 +52,7 @@ Commands:
   verify BD_ID_OR_SLUG         Record manual verification, linking a passing review when available.
   commit [--yes]               Use Codex to select changes, write a Lore message, and commit.
   push [--remote NAME]         Push the current branch, prompting for a remote when needed.
+  pull-main [options]          Pull the main/base branch into the current branch.
   pr [options]                 Use Codex to draft a professional PR and create it with GitHub CLI.
   pr-resolve [options]         Merge or rebase the PR target branch and ask Codex to resolve conflicts.
   i18n [LANG]                  Show or set artifact language (en, zh).
@@ -101,6 +102,7 @@ Examples:
   humanize-flow review-feedback bd-a1b2
   humanize-flow commit
   humanize-flow push
+  humanize-flow pull-main
   humanize-flow pr --base main
   humanize-flow pr-resolve --base main
 EOF
@@ -3367,7 +3369,7 @@ handle_commit_failure() {
 
 cmd_commit() {
   require_git_repo
-  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file stat_file diff_file selected_count path commit_log commit_status answer
+  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file stat_file diff_file selected_count path commit_log commit_status answer merge_in_progress
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
@@ -3394,7 +3396,102 @@ EOF
   stat_file="$run_dir/selected-diffstat.txt"
   diff_file="$run_dir/selected-diff.patch"
   if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
-    die "No changes to commit."
+    if [ "$(git_integration_state)" != "merge" ]; then
+      die "No changes to commit."
+    fi
+  fi
+  merge_in_progress=0
+  if [ "$(git_integration_state)" = "merge" ]; then
+    merge_in_progress=1
+  fi
+
+  if [ "$merge_in_progress" -eq 1 ]; then
+    if [ -n "$(git_unmerged_paths)" ]; then
+      die "Cannot commit while merge conflicts remain. Resolve unmerged paths first: $(git_unmerged_paths | tr '\n' ' ')"
+    fi
+    prompt_file="$run_dir/codex-merge-commit-prompt.md"
+    message_file="$run_dir/commit-message.txt"
+    stat_file="$run_dir/selected-diffstat.txt"
+    diff_file="$run_dir/selected-diff.patch"
+    git diff --cached --stat > "$stat_file" || true
+    git diff --cached > "$diff_file" || true
+    cat > "$prompt_file" <<EOF
+You are writing a git merge-resolution commit message.
+
+This repository is currently in a merge state after all PR target branch conflict paths were cleared.
+
+$(language_instruction)
+
+Inspect:
+- git status --short
+- git log --oneline --left-right HEAD...MERGE_HEAD
+- git diff --cached --stat
+- git diff --cached
+- git diff HEAD
+- Relevant repository guidance files, especially AGENTS.md and CLAUDE.md when present.
+
+Return only the commit message, with no Markdown fences and no explanation.
+Use the Lore Commit Protocol:
+
+<intent line: why the merge resolution was made, not what changed>
+
+<body: narrative context, constraints, approach rationale>
+
+Constraint: <external constraint that shaped the decision>
+Rejected: <alternative considered> | <reason>
+Confidence: <low|medium|high>
+Scope-risk: <narrow|moderate|broad>
+Directive: <forward-looking warning if useful>
+Tested: <what was verified>
+Not-tested: <known gaps>
+
+Keep the first line under 72 characters. Be honest about tests.
+EOF
+    info "merge commit prompt: $prompt_file"
+    prompt_text="$(cat "$prompt_file")"
+    run_codex_exec "$prompt_text" > "$message_file"
+    sed -i.bak '/^```/d' "$message_file"
+    rm -f "$message_file.bak"
+    first_line="$(sed -n '1p' "$message_file")"
+    [ -n "$first_line" ] || die "Codex returned an empty commit message."
+    info "merge resolution changes:"
+    if [ -s "$stat_file" ]; then
+      cat "$stat_file"
+    else
+      warn "No cached diffstat was produced for the merge resolution."
+    fi
+    if [ -s "$diff_file" ]; then
+      info "merge resolution diff: $diff_file"
+      if [ "$yes" -ne 1 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
+        info "opening merge resolution diff preview; press q to return to the commit confirmation prompt."
+        open_file_in_pager "$diff_file"
+      fi
+    else
+      warn "No cached diff content was produced for the merge resolution. Git may still create a merge commit."
+    fi
+    info "commit message: $message_file"
+    log ""
+    sed -n '1,120p' "$message_file"
+    log ""
+    if [ "$yes" -ne 1 ] && [ "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" != "1" ]; then
+      printf 'Create merge-resolution commit with this message? [y/N] '
+      read -r answer
+      case "$answer" in
+        y|Y|yes|YES) ;;
+        *) die "Commit cancelled. Message kept at $message_file" ;;
+      esac
+    fi
+    commit_log="$run_dir/git-commit.log"
+    set +e
+    git commit -F "$message_file" > "$commit_log" 2>&1
+    commit_status=$?
+    set -e
+    if [ "$commit_status" -ne 0 ]; then
+      handle_commit_failure "$run_dir" "$commit_log" "$message_file"
+      return "$commit_status"
+    fi
+    cat "$commit_log"
+    return 0
   fi
   cat > "$stage_prompt_file" <<EOF
 You are selecting which changed files belong in one git commit.
@@ -3791,9 +3888,318 @@ git_integration_state() {
   printf 'none\n'
 }
 
+current_branch_push_remote() {
+  local branch configured upstream
+  branch="$(git branch --show-current)"
+  [ -n "$branch" ] || return 0
+  configured="$(git config --get "branch.$branch.remote" 2>/dev/null || true)"
+  if [ -n "$configured" ] && [ "$configured" != "." ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null || true)"
+  case "$upstream" in
+    */*) printf '%s\n' "${upstream%%/*}" ;;
+  esac
+}
+
+cmd_pull_main() {
+  require_git_repo
+  local base="" remote="" no_fetch=0 yolo=0 branch state root run_id run_dir log_file stash_push_log stash_apply_log pre_stash_status merge_conflicts_file stash_conflicts_file marker_file prompt_file final_file impact_prompt_file impact_file prompt_text target_ref before_head after_head merge_status apply_status stash_created=0 stash_ref="" dirty_before stash_push_output conflicts_before conflicts_after path merge_result="clean" stash_result="not-needed"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) shift; base="${1:-}" ;;
+      --remote) shift; remote="${1:-}" ;;
+      --no-fetch) no_fetch=1 ;;
+      --yolo) yolo=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow pull-main [--base BRANCH] [--remote NAME] [--no-fetch] [--yolo]
+
+Pulls the repository's main/base branch into the current branch with a merge.
+The command auto-detects the base branch, stashes uncommitted work before the
+merge, asks Codex to resolve conflicts, restores the stash, and writes an impact
+report under .humanize-flow/runs/<timestamp>-pull-main/.
+
+Options:
+  --base BRANCH   Main/base branch. Defaults to branch gh-merge-base,
+                  origin/HEAD, main, then master.
+  --remote NAME   Remote to fetch the base branch from. Required in
+                  non-interactive mode when multiple remotes exist.
+  --no-fetch      Do not fetch before merging; use an existing local or
+                  remote-tracking base ref.
+  --yolo          Run Codex conflict-resolution prompts with yolo permissions.
+EOF
+        return 0 ;;
+      *) die "Unknown pull-main option: $1" ;;
+    esac
+    shift
+  done
+
+  command_exists codex || die "codex CLI not found."
+  root="$(repo_root)"
+  cd "$root"
+  branch="$(git branch --show-current)"
+  [ -n "$branch" ] || die "Cannot determine current branch."
+  state="$(git_integration_state)"
+  [ "$state" = "none" ] || die "Repository is already in a $state state. Resolve or abort that state before running pull-main."
+  if [ -z "$base" ]; then base="$(guess_pr_base)"; fi
+  [ "$branch" != "$base" ] || die "Current branch '$branch' matches detected base '$base'; switch to a feature branch before running pull-main."
+  before_head="$(git rev-parse HEAD)"
+  run_id="$(timestamp)-pull-main"
+
+  dirty_before="$(git status --porcelain --untracked-files=all)"
+  if [ -n "$dirty_before" ]; then
+    info "stashing uncommitted work before pulling $base"
+    pre_stash_status="$dirty_before"
+    set +e
+    stash_push_output="$(git stash push -u -m "humanize-flow pull-main autostash $run_id" 2>&1)"
+    apply_status=$?
+    set -e
+    [ "$apply_status" -eq 0 ] || die "Failed to stash uncommitted work before pulling $base: $stash_push_output"
+    stash_ref="$(git rev-parse -q --verify refs/stash 2>/dev/null || true)"
+    [ -n "$stash_ref" ] || die "Git reported local changes but did not create a stash."
+    stash_created=1
+    stash_result="stashed"
+  fi
+
+  run_dir="$(state_dir)/runs/$run_id"
+  mkdir -p "$run_dir"
+  log_file="$run_dir/git-pull-main.log"
+  stash_push_log="$run_dir/git-stash-push.log"
+  stash_apply_log="$run_dir/git-stash-apply.log"
+  merge_conflicts_file="$run_dir/merge-conflicted-files.txt"
+  stash_conflicts_file="$run_dir/stash-conflicted-files.txt"
+  marker_file="$run_dir/remaining-conflict-markers.txt"
+  prompt_file="$run_dir/codex-pull-main-conflict-prompt.md"
+  final_file="$run_dir/codex-pull-main-conflict-final.md"
+  impact_prompt_file="$run_dir/codex-pull-main-impact-prompt.md"
+  impact_file="$run_dir/impact-report.md"
+  if [ "$stash_created" -eq 1 ]; then
+    printf '%s\n' "$pre_stash_status" > "$run_dir/pre-stash-status.txt"
+    printf '%s\n' "$stash_push_output" > "$stash_push_log"
+  fi
+
+  target_ref="$base"
+  if [ "$no_fetch" -ne 1 ]; then
+    remote="$(select_git_remote "$remote" "pull-main")"
+    info "fetching $base from $remote"
+    git fetch "$remote" "$base" > "$log_file" 2>&1 || {
+      cat "$log_file" >&2
+      die "Failed to fetch $base from $remote. Stashed work is still saved at ${stash_ref:-none}. Log: $log_file"
+    }
+    target_ref="FETCH_HEAD"
+    if git show-ref --verify --quiet "refs/remotes/$remote/$base"; then
+      target_ref="$remote/$base"
+    fi
+  elif [ -n "$remote" ] && git show-ref --verify --quiet "refs/remotes/$remote/$base"; then
+    target_ref="$remote/$base"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$base"; then
+    target_ref="origin/$base"
+  fi
+
+  info "merging $target_ref into $branch"
+  set +e
+  git merge --no-edit "$target_ref" >> "$log_file" 2>&1
+  merge_status=$?
+  set -e
+  if [ "$merge_status" -ne 0 ]; then
+    conflicts_before="$(git_unmerged_paths)"
+    [ -n "$conflicts_before" ] || {
+      cat "$log_file" >&2
+      die "Merge failed without unmerged paths. Stashed work is still saved at ${stash_ref:-none}. Log: $log_file"
+    }
+    merge_result="conflicts-resolved"
+    printf '%s\n' "$conflicts_before" > "$merge_conflicts_file"
+    cat > "$prompt_file" <<EOF
+You are resolving main branch integration conflicts in this repository.
+
+Current branch: $branch
+Detected main/base branch: $base
+Target ref used: $target_ref
+Git merge log: $log_file
+Conflicted files list: $merge_conflicts_file
+
+$(language_instruction)
+
+Inspect:
+- git status --short --untracked-files=all
+- git diff --name-only --diff-filter=U
+- git diff --cc
+- git diff --ours -- <conflicted files>
+- git diff --theirs -- <conflicted files>
+- git log --oneline --left-right --merge
+- The conflicted files themselves, including conflict markers.
+- Relevant tests and nearby code needed to preserve behavior.
+
+Rules:
+- Resolve only conflicts caused by pulling the detected main/base branch into the current branch.
+- Preserve intended behavior from both the current branch and the main/base branch when compatible.
+- If behavior is genuinely incompatible, choose the smallest coherent resolution and explain the tradeoff.
+- Do not broaden feature scope, rewrite unrelated code, or reformat unrelated files.
+- Remove all conflict markers.
+- You may stage only the conflicted files after you have fully resolved them.
+- Do not commit, push, create a PR, run git reset, git checkout --, git restore, or git clean.
+- Run focused tests or static checks when practical. If you cannot run them, explain why.
+
+At the end, report:
+- Files resolved.
+- Behavioral choices made for each non-trivial conflict.
+- Verification commands run and outcomes.
+- Any remaining manual steps.
+EOF
+    info "merge conflict resolver prompt: $prompt_file"
+    prompt_text="$(cat "$prompt_file")"
+    if [ "$yolo" -eq 1 ]; then
+      run_codex_exec --yolo "$prompt_text" | tee "$final_file"
+    else
+      run_codex_exec "$prompt_text" | tee "$final_file"
+    fi
+    : > "$marker_file"
+    while IFS= read -r path || [ -n "$path" ]; do
+      [ -n "$path" ] || continue
+      [ -f "$path" ] || continue
+      grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- "$path" | sed "s#^#$path:#" >> "$marker_file" || true
+    done <<EOF
+$conflicts_before
+EOF
+    if [ -s "$marker_file" ]; then
+      die "Conflict marker scan found remaining markers. See $marker_file. Stashed work is still saved at ${stash_ref:-none}."
+    fi
+    git add --pathspec-from-file="$merge_conflicts_file"
+    conflicts_after="$(git_unmerged_paths)"
+    if [ -n "$conflicts_after" ]; then
+      printf '%s\n' "$conflicts_after" > "$run_dir/remaining-merge-conflicted-files.txt"
+      die "Codex returned but merge conflicts remain. See $run_dir/remaining-merge-conflicted-files.txt and $final_file. Stashed work is still saved at ${stash_ref:-none}."
+    fi
+    info "creating main-branch merge commit"
+    cmd_commit --yes
+  fi
+
+  if [ "$stash_created" -eq 1 ]; then
+    info "restoring stashed uncommitted work"
+    set +e
+    git stash apply stash@{0} > "$stash_apply_log" 2>&1
+    apply_status=$?
+    set -e
+    if [ "$apply_status" -eq 0 ]; then
+      stash_result="restored; autostash retained at $stash_ref"
+      info "stashed work restored; retained autostash at $stash_ref for safety"
+    else
+      conflicts_before="$(git_unmerged_paths)"
+      if [ -z "$conflicts_before" ]; then
+        stash_result="restore-blocked; autostash retained at $stash_ref; see $stash_apply_log"
+        warn "stash restore was blocked without merge conflicts; retained autostash at $stash_ref"
+      else
+      stash_result="restore-conflicts-resolved"
+      printf '%s\n' "$conflicts_before" > "$stash_conflicts_file"
+      prompt_file="$run_dir/codex-pull-main-stash-conflict-prompt.md"
+      final_file="$run_dir/codex-pull-main-stash-conflict-final.md"
+      cat > "$prompt_file" <<EOF
+You are resolving conflicts from restoring uncommitted work after pulling the main branch.
+
+Current branch: $branch
+Detected main/base branch: $base
+Autostash ref before restore: $stash_ref
+Stash apply log: $stash_apply_log
+Conflicted files list: $stash_conflicts_file
+
+$(language_instruction)
+
+Inspect:
+- git status --short --untracked-files=all
+- git diff --name-only --diff-filter=U
+- git diff --cc
+- The conflicted files themselves, including conflict markers.
+- Relevant nearby code needed to preserve both the pulled main-branch changes and the user's pre-existing uncommitted work.
+
+Rules:
+- Resolve only conflicts caused by restoring the user's pre-existing uncommitted work after the main/base branch merge.
+- Preserve the user's local uncommitted intent unless it is clearly incompatible with the pulled branch; if incompatible, choose the smallest coherent resolution and explain the tradeoff.
+- Remove all conflict markers.
+- You may stage only the conflicted files after you have fully resolved them.
+- Do not commit, push, create a PR, run git reset, git checkout --, git restore, git clean, or drop the stash.
+- Run focused tests or static checks when practical. If you cannot run them, explain why.
+
+At the end, report:
+- Files resolved.
+- Behavioral choices made for each non-trivial conflict.
+- Verification commands run and outcomes.
+- Whether restored local work is staged or unstaged.
+EOF
+      info "stash restore conflict resolver prompt: $prompt_file"
+      prompt_text="$(cat "$prompt_file")"
+      if [ "$yolo" -eq 1 ]; then
+        run_codex_exec --yolo "$prompt_text" | tee "$final_file"
+      else
+        run_codex_exec "$prompt_text" | tee "$final_file"
+      fi
+      : > "$marker_file"
+      while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        [ -f "$path" ] || continue
+        grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- "$path" | sed "s#^#$path:#" >> "$marker_file" || true
+      done <<EOF
+$conflicts_before
+EOF
+      if [ -s "$marker_file" ]; then
+        die "Conflict marker scan found remaining markers after stash restore. See $marker_file. Autostash is still saved at $stash_ref."
+      fi
+      git add --pathspec-from-file="$stash_conflicts_file"
+      conflicts_after="$(git_unmerged_paths)"
+      if [ -n "$conflicts_after" ]; then
+        printf '%s\n' "$conflicts_after" > "$run_dir/remaining-stash-conflicted-files.txt"
+        die "Codex returned but stash restore conflicts remain. See $run_dir/remaining-stash-conflicted-files.txt. Autostash is still saved at $stash_ref."
+      fi
+      stash_result="restore-conflicts-resolved; autostash retained at $stash_ref"
+      info "stashed work restored after conflict resolution; retained autostash at $stash_ref for safety"
+      fi
+    fi
+  fi
+
+  after_head="$(git rev-parse HEAD)"
+  cat > "$impact_prompt_file" <<EOF
+You are assessing the impact of pulling the main branch into the current branch.
+
+Current branch: $branch
+Detected main/base branch: $base
+Target ref used: $target_ref
+Head before integration: $before_head
+Head after integration: $after_head
+Merge result: $merge_result
+Stash result: $stash_result
+Run directory: $run_dir
+
+$(language_instruction)
+
+Inspect:
+- git status --short --untracked-files=all
+- git log --oneline --left-right $before_head...HEAD
+- git diff --stat $before_head..HEAD
+- git diff --name-status $before_head..HEAD
+- git diff --stat
+- git diff
+- Conflict resolver reports in $run_dir if present.
+
+Return a concise Markdown report with:
+- Main/base branch detected and target ref used.
+- Integration result.
+- Impact scope: affected files, modules, user-facing behavior, tests, docs, and release risk.
+- Conflict resolution summary, if conflicts occurred.
+- Stash restoration summary, if local work was stashed.
+- Verification performed or recommended next verification.
+- Remaining risks or follow-up actions.
+EOF
+  info "impact assessment prompt: $impact_prompt_file"
+  prompt_text="$(cat "$impact_prompt_file")"
+  run_codex_exec --sandbox read-only "$prompt_text" | tee "$impact_file"
+  info "pull-main complete; impact report: $impact_file"
+}
+
 cmd_pr_resolve() {
   require_git_repo
-  local base="" remote="" strategy="merge" no_fetch=0 yolo=0 branch state target_ref run_dir prompt_file final_file log_file conflicts_file marker_file prompt_text conflicts_before conflicts_after integrate_status integrate_cmd path
+  local base="" remote="" strategy="merge" no_fetch=0 yolo=0 no_commit=0 no_push=0 branch state target_ref run_dir prompt_file final_file log_file conflicts_file marker_file prompt_text conflicts_before conflicts_after integrate_status integrate_cmd path push_remote
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) shift; base="${1:-}" ;;
@@ -3801,25 +4207,31 @@ cmd_pr_resolve() {
       --merge) strategy="merge" ;;
       --rebase) strategy="rebase" ;;
       --no-fetch) no_fetch=1 ;;
+      --no-commit) no_commit=1 ;;
+      --no-push) no_push=1 ;;
       --yolo) yolo=1 ;;
       --help|-h)
         cat <<'EOF'
 Usage:
-  humanize-flow pr-resolve [--base BRANCH] [--remote NAME] [--merge|--rebase] [--no-fetch] [--yolo]
+  humanize-flow pr-resolve [--base BRANCH] [--remote NAME] [--merge|--rebase] [--no-fetch] [--no-commit] [--no-push] [--yolo]
 
 Integrates the PR target branch into the current branch, then asks Codex to
-resolve merge conflicts if Git stops with unmerged paths. The command does not
-commit, push, create a PR, run git merge --continue, or run git rebase --continue.
+resolve merge conflicts if Git stops with unmerged paths. For the default merge
+strategy, the command stages resolved conflict paths, creates the merge-resolution
+commit, and pushes the current branch unless disabled with options.
 
 Options:
   --base BRANCH   Target/base branch. Defaults to branch gh-merge-base,
                   origin/HEAD, main, then master.
   --remote NAME   Remote to fetch the base branch from. Required in
-                  non-interactive mode when multiple remotes exist.
+                  non-interactive mode when multiple remotes exist. Also used
+                  for the final push when provided.
   --merge         Merge the target branch into the current branch. Default.
   --rebase        Rebase the current branch onto the target branch.
   --no-fetch      Do not fetch before integrating; use an existing local or
                   remote-tracking base ref.
+  --no-commit     Stop after resolving and staging conflicts.
+  --no-push       Create the merge-resolution commit but do not push.
   --yolo          Run the Codex conflict resolver with yolo permissions.
 EOF
         return 0 ;;
@@ -3883,6 +4295,18 @@ EOF
     set -e
     if [ "$integrate_status" -eq 0 ]; then
       info "target branch integrated cleanly; log: $log_file"
+      if [ "$strategy" = "merge" ] && [ "$no_push" -ne 1 ]; then
+        push_remote="$remote"
+        [ -n "$push_remote" ] || push_remote="$(current_branch_push_remote)"
+        info "pushing resolved branch"
+        if [ -n "$push_remote" ]; then
+          cmd_push --remote "$push_remote"
+        else
+          cmd_push
+        fi
+      elif [ "$strategy" = "merge" ]; then
+        info "--no-push set; integrated branch not pushed."
+      fi
       return 0
     fi
   else
@@ -3927,7 +4351,8 @@ Rules:
 - If behavior is genuinely incompatible, choose the smallest coherent resolution and explain the tradeoff.
 - Do not broaden feature scope, rewrite unrelated code, or reformat unrelated files.
 - Remove all conflict markers.
-- Stage nothing unless staging is required by a tool you run; do not commit.
+- You may stage only the conflicted files after you have fully resolved them.
+- Do not commit.
 - Do not run git merge --continue, git rebase --continue, git commit, git push, gh pr create, git reset, git checkout --, git restore, or git clean.
 - Run focused tests or static checks when practical. If you cannot run them, explain why.
 
@@ -3946,11 +4371,6 @@ EOF
     run_codex_exec "$prompt_text" | tee "$final_file"
   fi
 
-  conflicts_after="$(git_unmerged_paths)"
-  if [ -n "$conflicts_after" ]; then
-    printf '%s\n' "$conflicts_after" > "$run_dir/remaining-conflicted-files.txt"
-    die "Codex returned but unmerged paths remain. See $run_dir/remaining-conflicted-files.txt and $final_file"
-  fi
   : > "$marker_file"
   while IFS= read -r path || [ -n "$path" ]; do
     [ -n "$path" ] || continue
@@ -3962,12 +4382,35 @@ EOF
   if [ -s "$marker_file" ]; then
     die "Conflict marker scan found remaining markers. See $marker_file"
   fi
+  git add --pathspec-from-file="$conflicts_file"
+  conflicts_after="$(git_unmerged_paths)"
+  if [ -n "$conflicts_after" ]; then
+    printf '%s\n' "$conflicts_after" > "$run_dir/remaining-conflicted-files.txt"
+    die "Codex returned but unmerged paths remain. See $run_dir/remaining-conflicted-files.txt and $final_file"
+  fi
 
   info "conflicts resolved; Codex report: $final_file"
   if [ "$strategy" = "rebase" ] || [ "$state" = "rebase" ]; then
     info "next step: run tests, stage resolved files if needed, then git rebase --continue"
   else
-    info "next step: run tests, then create the merge-resolution commit when ready"
+    if [ "$no_commit" -eq 1 ]; then
+      info "--no-commit set; resolved conflict paths are staged. Next step: run tests, then humanize-flow commit --yes"
+      return 0
+    fi
+    info "creating merge-resolution commit"
+    cmd_commit --yes
+    if [ "$no_push" -eq 1 ]; then
+      info "--no-push set; merge-resolution commit created but not pushed."
+      return 0
+    fi
+    push_remote="$remote"
+    [ -n "$push_remote" ] || push_remote="$(current_branch_push_remote)"
+    info "pushing resolved branch"
+    if [ -n "$push_remote" ]; then
+      cmd_push --remote "$push_remote"
+    else
+      cmd_push
+    fi
   fi
 }
 
@@ -4781,6 +5224,7 @@ main() {
     verify) cmd_verify "$@" ;;
     commit) cmd_commit "$@" ;;
     push) cmd_push "$@" ;;
+    pull-main|main-pull) cmd_pull_main "$@" ;;
     pr) cmd_pr "$@" ;;
     pr-resolve|resolve-pr) cmd_pr_resolve "$@" ;;
     status) cmd_status "$@" ;;

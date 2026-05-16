@@ -4,6 +4,17 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+## [0.5.9] - 2026-05-16
+
+### Added
+
+- Add `humanize-flow pull-main` to detect the repository base branch, autostash uncommitted work, merge the base branch into the current branch, ask Codex to resolve merge or stash-restore conflicts, and write an impact report.
+
+### Fixed
+
+- Make `humanize-flow commit` complete a merge-resolution commit after `pr-resolve` clears conflicts, instead of asking Codex to select partial paths and failing when it returns `NONE`.
+- Make default merge-mode `humanize-flow pr-resolve` stage resolved conflicts, create the merge-resolution commit, and push the PR branch automatically, with `--no-commit` and `--no-push` escape hatches.
+
 ## [0.5.8] - 2026-05-16
 
 ### Added

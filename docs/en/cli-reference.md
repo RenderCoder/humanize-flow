@@ -273,7 +273,9 @@ humanize-flow commit
 humanize-flow commit --yes
 ```
 
-Codex always selects which changed file paths belong in the commit based on `git status`, staged diff, unstaged diff, untracked files, and repository guidance such as `AGENTS.md` or `CLAUDE.md`. Existing staged changes are advisory context only: Codex may include related unstaged paths and exclude accidentally staged paths. The CLI stages the selected paths, writes them to `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, and writes the selected change preview to `selected-diffstat.txt` and `selected-diff.patch`. In interactive mode, it opens `selected-diff.patch` in your pager before confirmation; press `q` to return, then approve or reject the commit. The command commits only the selected paths unless the confirmation is rejected. Pass `--yes` to skip the preview confirmation prompt.
+Codex normally selects which changed file paths belong in the commit based on `git status`, staged diff, unstaged diff, untracked files, and repository guidance such as `AGENTS.md` or `CLAUDE.md`. Existing staged changes are advisory context only: Codex may include related unstaged paths and exclude accidentally staged paths. The CLI stages the selected paths, writes them to `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`, writes the generated message under `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`, and writes the selected change preview to `selected-diffstat.txt` and `selected-diff.patch`. In interactive mode, it opens `selected-diff.patch` in your pager before confirmation; press `q` to return, then approve or reject the commit. The command commits only the selected paths unless the confirmation is rejected. Pass `--yes` to skip the preview confirmation prompt.
+
+When the repository is in a clean merge state, such as after `humanize-flow pr-resolve` has resolved all unmerged paths, `commit` skips path selection and creates the merge-resolution commit for the full merge index. It still asks Codex for a Lore commit message and writes the merge-resolution preview to `selected-diffstat.txt` and `selected-diff.patch`. If unmerged paths remain, it refuses to commit.
 
 If `git commit` fails because a hook, linter, formatter, typecheck, or test command fails, the command saves the full output to `.humanize-flow/runs/<timestamp>-commit/git-commit.log`. In an interactive terminal, it then asks whether to create a Beads task for fixing the hook failure. Codex drafts the task from the hook output and selected diff; the CLI does not create this task silently.
 
@@ -287,6 +289,28 @@ humanize-flow push --remote origin
 ```
 
 If exactly one remote exists, the CLI pushes to it. If multiple remotes exist, it lists them and asks for a number or remote name. In non-interactive mode, pass `--remote`.
+
+## `humanize-flow pull-main`
+
+Pull the repository's main/base branch into the current branch with a merge.
+
+```bash
+humanize-flow pull-main
+humanize-flow pull-main --base main
+humanize-flow pull-main --base main --no-fetch
+humanize-flow pull-main --remote origin
+```
+
+The command detects the base branch using the same order as PR creation: branch `gh-merge-base`, `origin/HEAD`, `main`, then `master`. If the working tree has uncommitted changes, it creates an autostash before merging. If Git reports merge conflicts, it writes a Codex conflict-resolution prompt under `.humanize-flow/runs/<timestamp>-pull-main/`, asks Codex to resolve the conflicts, checks for remaining conflict markers, stages resolved conflict paths, and creates the merge commit. After the merge, it applies the autostash; if restoring local work creates normal Git conflicts, it asks Codex to resolve those conflicts too. If restore is blocked without unmerged paths, such as by untracked-file collisions, it keeps the stash and reports the blocker instead of overwriting files. The autostash is retained for safety even after a successful apply.
+
+At the end, `pull-main` asks Codex for an impact assessment and writes it to `impact-report.md` in the run directory. The report covers affected files/modules, behavior risk, docs/tests impact, conflict choices, stash restoration, and recommended verification.
+
+Options:
+
+- `--base <branch>`: base branch. Defaults to branch `gh-merge-base`, `origin/HEAD`, `main`, then `master`.
+- `--remote <name>`: remote to fetch the base branch from. Required in non-interactive mode when multiple remotes exist.
+- `--no-fetch`: skip fetching and use an existing local or remote-tracking base ref.
+- `--yolo`: run Codex conflict-resolution prompts with yolo permissions.
 
 ## `humanize-flow pr`
 
@@ -328,22 +352,25 @@ humanize-flow pr-resolve
 humanize-flow pr-resolve --base main
 humanize-flow pr-resolve --base main --no-fetch
 humanize-flow pr-resolve --base main --rebase
+humanize-flow pr-resolve --base main --no-commit --no-push
 ```
 
-By default, the command fetches the target branch, runs `git merge --no-edit <target>`, and exits immediately if the merge is clean. If Git reports conflicts, it writes a conflict-resolution prompt under `.humanize-flow/runs/<timestamp>-pr-resolve/`, asks Codex to resolve only the target-branch conflicts, then checks that no unmerged paths or conflict markers remain in the conflicted files.
+By default, the command fetches the target branch, runs `git merge --no-edit <target>`, and pushes the current branch if the merge is clean. If Git reports conflicts, it writes a conflict-resolution prompt under `.humanize-flow/runs/<timestamp>-pr-resolve/`, asks Codex to resolve only the target-branch conflicts, checks that no conflict markers remain in the conflicted files, stages the resolved conflict paths, creates the merge-resolution commit, and pushes the current branch.
 
 The command is intentionally conservative: before starting a new merge or rebase, tracked working tree changes must be committed or stashed. Untracked local artifacts may remain unless Git refuses to overwrite them. If you already have a merge or rebase conflict in progress, `pr-resolve` detects it and resolves that existing conflict state instead of starting another integration.
 
 Options:
 
 - `--base <branch>`: target/base branch. Defaults to branch `gh-merge-base`, `origin/HEAD`, `main`, then `master`.
-- `--remote <name>`: remote to fetch the base branch from. Required in non-interactive mode when multiple remotes exist.
+- `--remote <name>`: remote to fetch the base branch from. Required in non-interactive mode when multiple remotes exist. Also used for the final push when provided.
 - `--merge`: merge the target branch into the current branch. This is the default and does not rewrite feature-branch commits.
 - `--rebase`: rebase the current branch onto the target branch.
 - `--no-fetch`: skip fetching and use an existing local or remote-tracking base ref.
+- `--no-commit`: stop after resolving and staging conflicts.
+- `--no-push`: create the merge-resolution commit but do not push.
 - `--yolo`: run the Codex conflict resolver with yolo permissions.
 
-`pr-resolve` does not commit, push, create a PR, run `git merge --continue`, or run `git rebase --continue`. After it reports success, run the relevant checks, then create the merge-resolution commit or continue the rebase yourself.
+For `--rebase`, `pr-resolve` still stops after conflict resolution because continuing a rebase and pushing usually requires a history-rewrite decision. Use the default merge strategy when you want automatic commit and push.
 
 ## `humanize-flow status`
 

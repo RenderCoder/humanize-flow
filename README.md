@@ -82,7 +82,9 @@ humanize-flow push
 humanize-flow pr
 ```
 
-If GitHub reports that the PR cannot merge cleanly with the target branch, run `humanize-flow pr-resolve --base main` from the PR branch. It integrates the target branch, asks Codex to resolve only those conflicts, and leaves the final commit or rebase continuation under your control.
+When you need to refresh a feature branch before delivery, run `humanize-flow pull-main`. It detects the repository base branch, stashes local uncommitted work before merging, asks Codex to resolve conflicts when needed, restores the stashed work, and writes an impact report for review.
+
+If GitHub reports that the PR cannot merge cleanly with the target branch, run `humanize-flow pr-resolve --base main` from the PR branch. With the default merge strategy, it integrates the target branch, asks Codex to resolve only those conflicts, stages the resolved files, creates the merge-resolution commit, and pushes the PR branch. Use `--no-commit` or `--no-push` when you want to stop before those final steps.
 
 That is the recommended daily path: plan, approve, implement one ready task, review it, complete the human verification guide, then deliver. Use explicit Beads IDs when you know the next task:
 

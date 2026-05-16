@@ -273,7 +273,9 @@ humanize-flow commit
 humanize-flow commit --yes
 ```
 
-Codex 每次都会根据 `git status`、staged diff、unstaged diff、untracked files，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考：Codex 可以纳入相关的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，把路径列表写到 `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`，把生成的 message 写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，并把被选中的变更预览写到 `selected-diffstat.txt` 和 `selected-diff.patch`。在交互模式下，它会先用 pager 打开 `selected-diff.patch`；按 `q` 返回后，再确认或取消提交。命令只会提交这些被选中的路径。传 `--yes` 时跳过预览确认。
+通常情况下，Codex 会根据 `git status`、staged diff、unstaged diff、untracked files，以及 `AGENTS.md` / `CLAUDE.md` 等仓库约束判断哪些变更文件属于本次提交。已有 staged changes 只作为上下文参考：Codex 可以纳入相关的 unstaged 路径，也可以排除误暂存的路径。CLI 会 stage 被选中的路径，把路径列表写到 `.humanize-flow/runs/<timestamp>-commit/commit-paths.txt`，把生成的 message 写到 `.humanize-flow/runs/<timestamp>-commit/commit-message.txt`，并把被选中的变更预览写到 `selected-diffstat.txt` 和 `selected-diff.patch`。在交互模式下，它会先用 pager 打开 `selected-diff.patch`；按 `q` 返回后，再确认或取消提交。命令只会提交这些被选中的路径。传 `--yes` 时跳过预览确认。
+
+当仓库处于干净的 merge 状态时，例如 `humanize-flow pr-resolve` 已经清理完所有未合并路径后，`commit` 会跳过路径选择，为整个 merge index 创建 merge-resolution commit。它仍会让 Codex 起草 Lore commit message，并把 merge-resolution 预览写入 `selected-diffstat.txt` 和 `selected-diff.patch`。如果仍有未合并路径，命令会拒绝提交。
 
 如果 `git commit` 因 hook、lint、format、typecheck 或测试命令失败而失败，命令会把完整输出保存到 `.humanize-flow/runs/<timestamp>-commit/git-commit.log`。在交互终端中，它会询问是否创建一个 Beads 修复任务。Codex 会根据 hook 输出和被选中的 diff 起草任务；CLI 不会静默创建这个任务。
 
@@ -287,6 +289,28 @@ humanize-flow push --remote origin
 ```
 
 如果只有一个 remote，CLI 会直接推送。如果有多个 remote，会列出来并要求输入数字或 remote 名称。非交互模式下请传 `--remote`。
+
+## `humanize-flow pull-main`
+
+用 merge 方式把仓库 main/base 分支拉到当前分支。
+
+```bash
+humanize-flow pull-main
+humanize-flow pull-main --base main
+humanize-flow pull-main --base main --no-fetch
+humanize-flow pull-main --remote origin
+```
+
+命令会使用和创建 PR 相同的顺序识别 base 分支：当前分支的 `gh-merge-base`、`origin/HEAD`、`main`、`master`。如果工作区存在未提交改动，它会在 merge 前创建 autostash。Git 报告 merge 冲突时，它会把 Codex 冲突解决 prompt 写入 `.humanize-flow/runs/<timestamp>-pull-main/`，让 Codex 解决冲突，检查是否还有 conflict marker，stage 已解决冲突路径，并创建 merge commit。merge 完成后会 apply autostash；如果恢复本地改动时产生标准 Git 冲突，也会让 Codex 解决。如果恢复被未跟踪文件碰撞等情况阻塞、但没有 unmerged paths，命令会保留 stash 并报告阻塞原因，而不会猜测覆盖文件。即使 apply 成功，autostash 也会为了安全而保留。
+
+最后，`pull-main` 会让 Codex 评估影响范围，并把报告写入本次 run 目录的 `impact-report.md`。报告会覆盖受影响文件/模块、行为风险、文档/测试影响、冲突处理选择、stash 恢复情况和建议验证。
+
+选项：
+
+- `--base <branch>`：base 分支。默认依次使用当前分支的 `gh-merge-base`、`origin/HEAD`、`main`、`master`。
+- `--remote <name>`：fetch base 分支使用的 remote。非交互模式且存在多个 remote 时必须提供。
+- `--no-fetch`：跳过 fetch，使用已有本地或 remote-tracking base ref。
+- `--yolo`：用 yolo 权限运行 Codex 冲突解决 prompt。
 
 ## `humanize-flow pr`
 
@@ -328,22 +352,25 @@ humanize-flow pr-resolve
 humanize-flow pr-resolve --base main
 humanize-flow pr-resolve --base main --no-fetch
 humanize-flow pr-resolve --base main --rebase
+humanize-flow pr-resolve --base main --no-commit --no-push
 ```
 
-默认情况下，命令会 fetch 目标分支，执行 `git merge --no-edit <target>`；如果可以干净合并，会直接结束。如果 Git 报告冲突，它会把冲突处理 prompt 写入 `.humanize-flow/runs/<timestamp>-pr-resolve/`，让 Codex 只解决目标分支集成造成的冲突，然后检查是否还存在未合并路径或冲突文件中的 conflict marker。
+默认情况下，命令会 fetch 目标分支，执行 `git merge --no-edit <target>`；如果可以干净合并，会推送当前分支。如果 Git 报告冲突，它会把冲突处理 prompt 写入 `.humanize-flow/runs/<timestamp>-pr-resolve/`，让 Codex 只解决目标分支集成造成的冲突，检查冲突文件中没有 conflict marker 后，stage 已解决的冲突路径，创建 merge-resolution commit，并推送当前分支。
 
 这条命令刻意保持保守：开始新的 merge 或 rebase 前，已跟踪文件的工作区改动必须先提交或 stash。未跟踪的本地产物可以保留，除非 Git 拒绝覆盖它们。如果你已经处在 merge 或 rebase 冲突状态，`pr-resolve` 会检测并解决当前已有冲突，而不是再启动一次新的集成。
 
 选项：
 
 - `--base <branch>`：目标/base 分支。默认依次使用当前分支的 `gh-merge-base`、`origin/HEAD`、`main`、`master`。
-- `--remote <name>`：fetch base 分支使用的 remote。非交互模式且存在多个 remote 时必须提供。
+- `--remote <name>`：fetch base 分支使用的 remote。非交互模式且存在多个 remote 时必须提供；如果提供，也会用于最终 push。
 - `--merge`：把目标分支 merge 到当前分支。这是默认策略，不会改写 feature 分支提交。
 - `--rebase`：把当前分支 rebase 到目标分支之上。
 - `--no-fetch`：跳过 fetch，使用已有本地或 remote-tracking base ref。
+- `--no-commit`：解决并 stage 冲突后停止。
+- `--no-push`：创建 merge-resolution commit，但不 push。
 - `--yolo`：用 yolo 权限运行 Codex 冲突解决器。
 
-`pr-resolve` 不会 commit、push、创建 PR、运行 `git merge --continue`，也不会运行 `git rebase --continue`。成功后请先运行相关检查，再自行创建 merge-resolution commit 或继续 rebase。
+对于 `--rebase`，`pr-resolve` 仍会在解决冲突后停止，因为继续 rebase 和推送通常涉及改写历史的决策。需要自动 commit 和 push 时，请使用默认 merge 策略。
 
 ## `humanize-flow status`
 

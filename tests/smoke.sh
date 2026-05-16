@@ -181,11 +181,27 @@ case "$*" in
     git add conflict.txt
     printf 'Resolved conflict.txt by keeping both base and feature lines.\n'
     ;;
+  *"resolving main branch integration conflicts"*)
+    printf 'main\nfeature\n' > pull-main-conflict.txt
+    git add pull-main-conflict.txt
+    printf 'Resolved pull-main-conflict.txt by keeping both main and feature lines.\n'
+    ;;
+  *"resolving conflicts from restoring uncommitted work"*)
+    printf 'main\nlocal\n' > stash-conflict.txt
+    git add stash-conflict.txt
+    printf 'Resolved stash-conflict.txt by keeping both main and local lines.\n'
+    ;;
+  *"assessing the impact of pulling the main branch"*)
+    printf '## Impact report\n\n- Base branch: main.\n- Integration touched pull-main smoke files.\n- Verification: smoke pull-main.\n'
+    ;;
   *"explaining a Humanize Flow status snapshot"*)
     printf 'Status explanation: latest Humanize Flow activity is understandable from the snapshot.\n'
     ;;
   *"selecting which changed files belong in one git commit"*)
     printf 'commit-test.txt\n'
+    ;;
+  *"writing a git merge-resolution commit message"*)
+    printf 'Resolve PR target branch conflicts\n\nThe target branch integration needed an explicit merge-resolution commit after pr-resolve cleared conflicts.\n\nConfidence: high\nScope-risk: narrow\nTested: smoke merge-resolution commit\n'
     ;;
   *"drafting a Beads task for a failed git commit hook"*)
     printf '{"title":"Fix commit hook eslint failure","description":"Commit hook failed because eslint was unavailable.","priority":2,"labels":["humanize-flow","commit-hook","eslint"]}\n'
@@ -266,6 +282,58 @@ case "$*" in
 esac
 GH
 chmod +x "$TMP/fake-bin/gh"
+(
+  mkdir -p "$TMP/pull-main-repo"
+  cd "$TMP/pull-main-repo"
+  git init -q
+  git config user.email smoke@example.com
+  git config user.name "Smoke Test"
+  printf 'base\n' > base.txt
+  git add base.txt
+  git commit -qm 'Initial pull-main baseline'
+  git branch -M main
+  git checkout -qb feature/pull-main-smoke
+  git checkout main >/dev/null 2>&1
+  printf 'main clean\n' > pull-main-clean.txt
+  git add pull-main-clean.txt
+  git commit -qm 'Add pull-main clean base file'
+  git checkout feature/pull-main-smoke >/dev/null 2>&1
+  printf 'local scratch\n' > local-scratch.txt
+  CODEX_ARGS_CAPTURE="$TMP/codex-pull-main-clean-args.txt" CODEX_ARGS_CAPTURE_APPEND="$TMP/codex-pull-main-clean-all-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pull-main --base main --no-fetch >"$TMP/pull-main-clean.stdout"
+  test -f pull-main-clean.txt
+  test -f local-scratch.txt
+  git stash list | grep -q 'humanize-flow pull-main autostash'
+  grep -q 'assessing the impact of pulling the main branch' "$TMP/codex-pull-main-clean-all-args.txt"
+  grep -q 'impact report:' "$TMP/pull-main-clean.stdout"
+  grep -R 'Impact report' .humanize-flow/runs/*/impact-report.md >/dev/null
+  git checkout main >/dev/null 2>&1
+  printf 'main\n' > pull-main-conflict.txt
+  git add pull-main-conflict.txt
+  git commit -qm 'Add pull-main base conflict line'
+  git checkout feature/pull-main-smoke >/dev/null 2>&1
+  printf 'feature\n' > pull-main-conflict.txt
+  git add pull-main-conflict.txt
+  git commit -qm 'Add pull-main feature conflict line'
+  CODEX_ARGS_CAPTURE="$TMP/codex-pull-main-conflict-args.txt" CODEX_ARGS_CAPTURE_APPEND="$TMP/codex-pull-main-conflict-all-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pull-main --base main --no-fetch >"$TMP/pull-main-conflict.stdout"
+  grep -q 'resolving main branch integration conflicts' "$TMP/codex-pull-main-conflict-all-args.txt"
+  grep -q 'writing a git merge-resolution commit message' "$TMP/codex-pull-main-conflict-all-args.txt"
+  grep -R '^pull-main-conflict.txt$' .humanize-flow/runs/*/merge-conflicted-files.txt >/dev/null
+  test -z "$(git diff --name-only --diff-filter=U)"
+  grep -qx 'main' pull-main-conflict.txt
+  grep -qx 'feature' pull-main-conflict.txt
+  git log -1 --pretty=%B | grep -q 'Resolve PR target branch conflicts'
+  git checkout main >/dev/null 2>&1
+  printf 'main\n' > stash-conflict.txt
+  git add stash-conflict.txt
+  git commit -qm 'Add stash restore base conflict line'
+  git checkout feature/pull-main-smoke >/dev/null 2>&1
+  printf 'local\n' > stash-conflict.txt
+  CODEX_ARGS_CAPTURE="$TMP/codex-pull-main-stash-args.txt" CODEX_ARGS_CAPTURE_APPEND="$TMP/codex-pull-main-stash-all-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pull-main --base main --no-fetch >"$TMP/pull-main-stash.stdout" 2>"$TMP/pull-main-stash.stderr"
+  test -z "$(git diff --name-only --diff-filter=U)"
+  grep -qx 'main' stash-conflict.txt
+  grep -q 'restore-blocked' "$TMP/codex-pull-main-stash-all-args.txt"
+  grep -q 'stash restore was blocked without merge conflicts' "$TMP/pull-main-stash.stderr"
+)
 (
   cd "$TMP/repo"
   git init -q
@@ -729,15 +797,25 @@ PY
   printf 'feature\n' > conflict.txt
   git add conflict.txt
   git commit -qm 'Add feature conflict line'
-  CODEX_ARGS_CAPTURE="$TMP/codex-pr-resolve-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr-resolve --base main --no-fetch >"$TMP/pr-resolve.stdout"
-  grep -q 'resolving PR target branch conflicts' "$TMP/codex-pr-resolve-args.txt"
-  grep -q 'git diff --name-only --diff-filter=U' "$TMP/codex-pr-resolve-args.txt"
+  git init --bare "$TMP/pr-resolve-remote.git" >/dev/null
+  git remote set-url origin "$TMP/pr-resolve-remote.git"
+  git branch --set-upstream-to=origin/feature/pr-smoke feature/pr-smoke 2>/dev/null || git config branch.feature/pr-smoke.remote origin
+  git config branch.feature/pr-smoke.merge refs/heads/feature/pr-smoke
+  CODEX_ARGS_CAPTURE="$TMP/codex-pr-resolve-args.txt" CODEX_ARGS_CAPTURE_APPEND="$TMP/codex-pr-resolve-all-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" pr-resolve --base main --no-fetch >"$TMP/pr-resolve.stdout"
+  grep -q 'resolving PR target branch conflicts' "$TMP/codex-pr-resolve-all-args.txt"
+  grep -q 'git diff --name-only --diff-filter=U' "$TMP/codex-pr-resolve-all-args.txt"
   test -z "$(git diff --name-only --diff-filter=U)"
   grep -qx 'base' conflict.txt
   grep -qx 'feature' conflict.txt
   grep -R '^conflict.txt$' .humanize-flow/runs/*/conflicted-files.txt >/dev/null
   grep -q 'conflicts resolved' "$TMP/pr-resolve.stdout"
-  git commit -qm 'Resolve PR target conflict'
+  grep -q 'creating merge-resolution commit' "$TMP/pr-resolve.stdout"
+  grep -q 'pushing resolved branch' "$TMP/pr-resolve.stdout"
+  grep -q 'writing a git merge-resolution commit message' "$TMP/codex-pr-resolve-all-args.txt"
+  grep -R 'Resolve PR target branch conflicts' .humanize-flow/runs/*/commit-message.txt >/dev/null
+  git log -1 --pretty=%B | grep -q 'Resolve PR target branch conflicts'
+  test -z "$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)"
+  test "$(git --git-dir="$TMP/pr-resolve-remote.git" rev-parse refs/heads/feature/pr-smoke)" = "$(git rev-parse HEAD)"
   printf 'change\n' > commit-test.txt
   CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >/dev/null
   git log -1 --pretty=%B | grep -q 'fake review'

@@ -82,7 +82,9 @@ humanize-flow push
 humanize-flow pr
 ```
 
-如果 GitHub 提示 PR 无法干净合入目标分支，在 PR 分支运行 `humanize-flow pr-resolve --base main`。它会集成目标分支，让 Codex 只解决这次集成造成的冲突，并把最终 commit 或 rebase continue 留给你控制。
+交付前需要刷新 feature 分支时，运行 `humanize-flow pull-main`。它会识别仓库 base 分支，merge 前自动 stash 本地未提交改动，需要时让 Codex 解决冲突，恢复 stash 的改动，并写出影响范围报告供审阅。
+
+如果 GitHub 提示 PR 无法干净合入目标分支，在 PR 分支运行 `humanize-flow pr-resolve --base main`。默认 merge 策略下，它会集成目标分支，让 Codex 只解决这次集成造成的冲突，stage 已解决文件，创建 merge-resolution commit，并推送 PR 分支。需要在最终步骤前停下时，使用 `--no-commit` 或 `--no-push`。
 
 这是日常推荐路径：规划、批准、执行一个 ready 任务、review、完成人工验证，再交付。明确知道下一个任务时，优先使用实际 Beads ID：
 
