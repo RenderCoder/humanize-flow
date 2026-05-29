@@ -198,7 +198,11 @@ case "$*" in
     printf 'Status explanation: latest Humanize Flow activity is understandable from the snapshot.\n'
     ;;
   *"selecting which changed files belong in one git commit"*)
-    printf 'commit-test.txt\n'
+    if [ -n "${CODEX_COMMIT_SELECTION:-}" ]; then
+      printf '%s\n' "$CODEX_COMMIT_SELECTION"
+    else
+      printf 'commit-test.txt\n'
+    fi
     ;;
   *"writing a git merge-resolution commit message"*)
     printf 'Resolve PR target branch conflicts\n\nThe target branch integration needed an explicit merge-resolution commit after pr-resolve cleared conflicts.\n\nConfidence: high\nScope-risk: narrow\nTested: smoke merge-resolution commit\n'
@@ -817,12 +821,26 @@ PY
   test -z "$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)"
   test "$(git --git-dir="$TMP/pr-resolve-remote.git" rev-parse refs/heads/feature/pr-smoke)" = "$(git rev-parse HEAD)"
   printf 'change\n' > commit-test.txt
-  CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >/dev/null
+  mkdir -p docs/humanize-flow/commit-test .humanize-flow/handoffs
+  printf 'generated plan\n' > docs/humanize-flow/commit-test/plan.md
+  printf '{"state":"draft"}\n' > .humanize-flow/handoffs/commit-test.json
+  CODEX_COMMIT_SELECTION="$(printf 'commit-test.txt\ndocs/humanize-flow/commit-test/plan.md\n.humanize-flow/handoffs/commit-test.json')" CODEX_ARGS_CAPTURE="$TMP/codex-commit-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >"$TMP/commit-default.stdout"
   git log -1 --pretty=%B | grep -q 'fake review'
   git show --name-only --pretty='' HEAD | grep -q '^commit-test.txt$'
+  ! git show --name-only --pretty='' HEAD | grep -q '^docs/humanize-flow/commit-test/plan.md$'
+  ! git show --name-only --pretty='' HEAD | grep -q '^.humanize-flow/handoffs/commit-test.json$'
+  grep -q 'rerun with --with-doc' "$TMP/commit-default.stdout"
   grep -R '^commit-test.txt$' .humanize-flow/runs/*/commit-paths.txt >/dev/null
+  grep -R '^docs/humanize-flow/commit-test/plan.md$' .humanize-flow/runs/*/excluded-commit-paths.txt >/dev/null
+  grep -R '^.humanize-flow/handoffs/commit-test.json$' .humanize-flow/runs/*/excluded-commit-paths.txt >/dev/null
   grep -R '^diff --git a/commit-test.txt b/commit-test.txt' .humanize-flow/runs/*/selected-diff.patch >/dev/null
   grep -R 'commit-test.txt' .humanize-flow/runs/*/selected-diffstat.txt >/dev/null
+  printf 'with-doc\n' > commit-with-doc.txt
+  CODEX_COMMIT_SELECTION="$(printf 'commit-with-doc.txt\ndocs/humanize-flow/commit-test/plan.md\n.humanize-flow/handoffs/commit-test.json')" CODEX_ARGS_CAPTURE="$TMP/codex-commit-with-doc-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes --with-doc >"$TMP/commit-with-doc.stdout"
+  git show --name-only --pretty='' HEAD | grep -q '^commit-with-doc.txt$'
+  git show --name-only --pretty='' HEAD | grep -q '^docs/humanize-flow/commit-test/plan.md$'
+  git show --name-only --pretty='' HEAD | grep -q '^.humanize-flow/handoffs/commit-test.json$'
+  grep -R 'The user passed --with-doc' .humanize-flow/runs/*/codex-stage-prompt.md >/dev/null
   printf '#!/usr/bin/env bash\nprintf "lefthook pre-commit failed: eslint not found\\n" >&2\nexit 1\n' > .git/hooks/pre-commit
   chmod +x .git/hooks/pre-commit
   printf 'again\n' >> commit-test.txt

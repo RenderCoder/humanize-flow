@@ -82,6 +82,8 @@ humanize-flow push
 humanize-flow pr
 ```
 
+`humanize-flow commit` 默认排除 Humanize Flow 生成的计划和 review 产物，包括 `docs/humanize-flow/**`、`.humanize-flow/handoffs/**` 和 `.humanize-flow/verifications/**`。确实需要提交这些产物时，使用 `humanize-flow commit --with-doc`。
+
 交付前需要刷新 feature 分支时，运行 `humanize-flow pull-main`。它会识别仓库 base 分支，merge 前自动 stash 本地未提交改动，需要时让 Codex 解决冲突，恢复 stash 的改动，并写出影响范围报告供审阅。
 
 如果 GitHub 提示 PR 无法干净合入目标分支，在 PR 分支运行 `humanize-flow pr-resolve --base main`。默认 merge 策略下，它会集成目标分支，让 Codex 只解决这次集成造成的冲突，stage 已解决文件，创建 merge-resolution commit，并推送 PR 分支。需要在最终步骤前停下时，使用 `--no-commit` 或 `--no-push`。

@@ -101,6 +101,7 @@ Examples:
   humanize-flow review bd-a1b2
   humanize-flow review-feedback bd-a1b2
   humanize-flow commit
+  humanize-flow commit --with-doc
   humanize-flow push
   humanize-flow pull-main
   humanize-flow pr --base main
@@ -3222,6 +3223,28 @@ write_selected_cached_changes() {
   done < "$paths_file"
 }
 
+humanize_flow_runtime_artifact_path() {
+  case "$1" in
+    .humanize-flow/runs|.humanize-flow/runs/*|.humanize-flow/tmp|.humanize-flow/tmp/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+humanize_flow_doc_artifact_path() {
+  case "$1" in
+    docs/humanize-flow|docs/humanize-flow/*|.humanize-flow/handoffs|.humanize-flow/handoffs/*|.humanize-flow/verifications|.humanize-flow/verifications/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 open_file_in_pager() {
   local file pager_cmd
   file="$1"
@@ -3369,18 +3392,21 @@ handle_commit_failure() {
 
 cmd_commit() {
   require_git_repo
-  local yes=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file stat_file diff_file selected_count path commit_log commit_status answer merge_in_progress
+  local yes=0 with_doc=0 message_file prompt_file run_dir prompt_text first_line stage_prompt_file stage_paths_file commit_paths_file excluded_paths_file stat_file diff_file selected_count excluded_count path commit_log commit_status answer merge_in_progress doc_policy_text
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
+      --with-doc) with_doc=1 ;;
       --help|-h)
         cat <<'EOF'
 Usage:
-  humanize-flow commit [--yes]
+  humanize-flow commit [--yes] [--with-doc]
 
 Creates a commit with Codex-selected paths and a Codex-drafted Lore commit
 message. Codex always reviews the full working tree, including staged and
 unstaged changes, then selects which changed paths belong in this commit.
+By default, generated Humanize Flow planning/review docs are excluded from the
+commit path set. Pass --with-doc to allow those artifacts.
 EOF
         return 0 ;;
       *) die "Unknown commit option: $1" ;;
@@ -3393,6 +3419,7 @@ EOF
   stage_prompt_file="$run_dir/codex-stage-prompt.md"
   stage_paths_file="$run_dir/stage-paths.txt"
   commit_paths_file="$run_dir/commit-paths.txt"
+  excluded_paths_file="$run_dir/excluded-commit-paths.txt"
   stat_file="$run_dir/selected-diffstat.txt"
   diff_file="$run_dir/selected-diff.patch"
   if [ -z "$(git status --porcelain --untracked-files=all)" ]; then
@@ -3493,10 +3520,18 @@ EOF
     cat "$commit_log"
     return 0
   fi
+  if [ "$with_doc" -eq 1 ]; then
+    doc_policy_text="The user passed --with-doc. You may include Humanize Flow generated planning/review artifacts when they genuinely belong in this commit. This includes docs/humanize-flow/**, .humanize-flow/handoffs/**, and .humanize-flow/verifications/**. Continue to exclude local runtime artifacts such as .humanize-flow/runs/** and .humanize-flow/tmp/**."
+  else
+    doc_policy_text="Default policy: do not include Humanize Flow generated planning/review artifacts in the commit path list. Exclude docs/humanize-flow/**, .humanize-flow/handoffs/**, and .humanize-flow/verifications/** even if they are staged or related. The user can rerun humanize-flow commit --with-doc to include them intentionally. Also exclude local runtime artifacts such as .humanize-flow/runs/** and .humanize-flow/tmp/**."
+  fi
   cat > "$stage_prompt_file" <<EOF
 You are selecting which changed files belong in one git commit.
 
 $(language_instruction)
+
+Humanize Flow artifact policy:
+$doc_policy_text
 
 Inspect:
 - git status --short --untracked-files=all
@@ -3524,7 +3559,9 @@ EOF
   sed -i.bak '/^```/d' "$stage_paths_file"
   rm -f "$stage_paths_file.bak"
   : > "$commit_paths_file"
+  : > "$excluded_paths_file"
   selected_count=0
+  excluded_count=0
   while IFS= read -r path || [ -n "$path" ]; do
     path="${path%$'\r'}"
     [ -n "$path" ] || continue
@@ -3537,10 +3574,27 @@ EOF
     if [ -z "$(git status --porcelain --untracked-files=all -- "$path")" ]; then
       die "Codex selected a path with no working tree changes: $path"
     fi
+    if humanize_flow_runtime_artifact_path "$path"; then
+      printf '%s\n' "$path" >> "$excluded_paths_file"
+      excluded_count=$((excluded_count + 1))
+      continue
+    fi
+    if [ "$with_doc" -ne 1 ] && humanize_flow_doc_artifact_path "$path"; then
+      printf '%s\n' "$path" >> "$excluded_paths_file"
+      excluded_count=$((excluded_count + 1))
+      continue
+    fi
     printf '%s\n' "$path" >> "$commit_paths_file"
     git add -- "$path"
     selected_count=$((selected_count + 1))
   done < "$stage_paths_file"
+  if [ "$excluded_count" -gt 0 ]; then
+    if [ "$with_doc" -eq 1 ]; then
+      info "excluded $excluded_count local runtime artifact path(s); list saved: $excluded_paths_file"
+    else
+      info "excluded $excluded_count Humanize Flow artifact path(s); rerun with --with-doc to include planning/review docs. List saved: $excluded_paths_file"
+    fi
+  fi
   [ "$selected_count" -gt 0 ] || die "Codex did not select any files to commit. Selection kept at $stage_paths_file"
   info "selected $selected_count path(s) for commit; selection saved: $commit_paths_file"
   prompt_file="$run_dir/codex-commit-prompt.md"

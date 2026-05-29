@@ -4,6 +4,10 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Make `humanize-flow commit` exclude generated Humanize Flow planning/review artifacts by default, with `--with-doc` to include them intentionally.
+
 ## [0.5.9] - 2026-05-16
 
 ### Added

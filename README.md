@@ -82,6 +82,8 @@ humanize-flow push
 humanize-flow pr
 ```
 
+`humanize-flow commit` excludes generated Humanize Flow planning/review artifacts by default, including `docs/humanize-flow/**`, `.humanize-flow/handoffs/**`, and `.humanize-flow/verifications/**`. Use `humanize-flow commit --with-doc` when those artifacts should be committed intentionally.
+
 When you need to refresh a feature branch before delivery, run `humanize-flow pull-main`. It detects the repository base branch, stashes local uncommitted work before merging, asks Codex to resolve conflicts when needed, restores the stashed work, and writes an impact report for review.
 
 If GitHub reports that the PR cannot merge cleanly with the target branch, run `humanize-flow pr-resolve --base main` from the PR branch. With the default merge strategy, it integrates the target branch, asks Codex to resolve only those conflicts, stages the resolved files, creates the merge-resolution commit, and pushes the PR branch. Use `--no-commit` or `--no-push` when you want to stop before those final steps.
