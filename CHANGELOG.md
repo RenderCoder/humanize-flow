@@ -8,6 +8,10 @@ All notable changes to humanize-flow will be documented in this file.
 
 - Make `humanize-flow commit` exclude generated Humanize Flow planning/review artifacts by default, with `--with-doc` to include them intentionally.
 
+### Fixed
+
+- Mark the Beads Epic `in_progress` when `humanize-flow run <handoff-slug-or-epic-id> --yolo` starts an Epic-scoped run.
+
 ## [0.5.9] - 2026-05-16
 
 ### Added

@@ -120,6 +120,23 @@ JSON
     fi
     printf '{"id":"%s","status":"closed"}\n' "$id"
     ;;
+  update)
+    shift
+    id="${1:-}"
+    shift || true
+    status=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --status) shift; status="${1:-}" ;;
+        --status=*) status="${1#--status=}" ;;
+      esac
+      shift || true
+    done
+    if [ -n "${BD_UPDATE_ARGS_CAPTURE:-}" ]; then
+      printf '%s %s\n' "$id" "$status" >> "$BD_UPDATE_ARGS_CAPTURE"
+    fi
+    printf '{"id":"%s","status":"%s"}\n' "$id" "$status"
+    ;;
   create)
     printf '%s\n' "$@" > "$BD_CREATE_ARGS_CAPTURE"
     cat <<'JSON'
@@ -127,7 +144,7 @@ JSON
 JSON
     ;;
   *)
-    echo "fake bd only supports show, ready, and create" >&2
+    echo "fake bd only supports show, ready, close, update, and create" >&2
     exit 2
     ;;
 esac
@@ -710,9 +727,11 @@ PY
   printf '# Acceptance\n' > docs/humanize-flow/epic-yolo/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-each-task --max-round 2 >"$TMP/epic-yolo.stdout"
+  : > "$TMP/bd-update-args.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_UPDATE_ARGS_CAPTURE="$TMP/bd-update-args.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-each-task --max-round 2 >"$TMP/epic-yolo.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "4"
   test "$(cat "$TMP/yolo-review-count.txt")" = "4"
+  grep -qx 'bd-epic in_progress' "$TMP/bd-update-args.txt"
   grep -q 'Epic scheduling: dynamic via bd ready --json' "$TMP/epic-yolo.stdout"
   grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-args.txt"
   grep -q 'Review only Beads task `bd-epic.1` within handoff `epic-yolo`' "$TMP/codex-epic-yolo-review-args.txt"
@@ -722,9 +741,11 @@ PY
   test "$(sed -n '2p' "$TMP/bd-close-args.txt")" = "bd-epic.1"
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo-final.stdout"
+  : > "$TMP/bd-update-args.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_UPDATE_ARGS_CAPTURE="$TMP/bd-update-args.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo-final.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -qx 'bd-epic in_progress' "$TMP/bd-update-args.txt"
   grep -q 'review strategy: final full-scope review after all child tasks' "$TMP/epic-yolo-final.stdout"
   grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-final.stdout"
   grep -q 'Review the full approved handoff scope for `epic-yolo`' "$TMP/codex-epic-yolo-final-review-args.txt"
@@ -755,9 +776,11 @@ PY
   "$ROOT/bin/humanize-flow" config set worker.provider claude >/dev/null
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
   printf 'bd-epic.2\nbd-epic.1\n' > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-resume-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-resume-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-resume.stdout"
+  : > "$TMP/bd-update-args.txt"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_UPDATE_ARGS_CAPTURE="$TMP/bd-update-args.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-resume-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-resume-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run epic-yolo --yolo --review-at-end --max-round 2 >"$TMP/epic-yolo-resume.stdout"
   test ! -f "$TMP/yolo-claude-count.txt"
   test "$(cat "$TMP/yolo-review-count.txt")" = "1"
+  grep -qx 'bd-epic in_progress' "$TMP/bd-update-args.txt"
   grep -q 'completed child tasks recovered from Beads: 2/2' "$TMP/epic-yolo-resume.stdout"
   grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-resume.stdout"
   test ! -f "$TMP/bd-close-args.txt"

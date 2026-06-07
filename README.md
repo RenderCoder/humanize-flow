@@ -109,7 +109,7 @@ humanize-flow run <handoff-slug-or-epic-id> --yolo
 humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 5 --retry 5 --retry-delay 20
 ```
 
-YOLO forces `--humanize-mode off`, restores progress from already closed Beads child tasks when resuming, continues handoff child tasks already marked `in_progress`, re-queries Beads ready state before each remaining Epic child task, and separates infrastructure retries from business correction rounds. By default, YOLO now implements all ready handoff children first and then runs one final full-scope Codex review/correction loop. Use `--review-each-task` when you prefer the older per-child review cadence. The default correction limit is 5 rounds and can be persisted with `humanize-flow config set yolo.max_round 5`.
+YOLO forces `--humanize-mode off`, marks the Beads Epic `in_progress` for Epic-scoped runs, restores progress from already closed Beads child tasks when resuming, continues handoff child tasks already marked `in_progress`, re-queries Beads ready state before each remaining Epic child task, and separates infrastructure retries from business correction rounds. By default, YOLO now implements all ready handoff children first and then runs one final full-scope Codex review/correction loop. Use `--review-each-task` when you prefer the older per-child review cadence. The default correction limit is 5 rounds and can be persisted with `humanize-flow config set yolo.max_round 5`.
 
 To use Codex instead of Claude Code for YOLO implementation, set the worker provider once:
 

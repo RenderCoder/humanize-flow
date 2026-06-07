@@ -1848,6 +1848,38 @@ raise SystemExit(1)
 PY
 }
 
+yolo_epic_bd_id() {
+  local slug
+  slug="$1"
+  python3 - "$(handoff_path "$slug")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+epic = (data.get('bd') or {}).get('epic') or {}
+epic_id = epic.get('bd_id') if isinstance(epic, dict) else ''
+if epic_id:
+    print(epic_id)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+yolo_mark_epic_in_progress() {
+  local epic_id
+  epic_id="$1"
+  command_exists bd || die "YOLO Epic mode requires bd CLI so it can mark the Epic in progress."
+  [ -n "$epic_id" ] || die "YOLO Epic mode could not resolve the Beads Epic id to mark in progress."
+  if ! bd update "$epic_id" --status in_progress --json >/dev/null; then
+    die "YOLO Epic mode could not mark Beads Epic in progress: $epic_id"
+  fi
+}
+
 yolo_ready_child_task_ids() {
   local slug completed_csv tmp
   slug="$1"; completed_csv="${2:-}"
@@ -2339,7 +2371,7 @@ cmd_run_yolo() {
   require_git_repo
   local ref max_round model output_format verbose partial hook_events humanize_mode claude_env_file retry retry_delay review_strategy worker_provider slug
   local epic_scope child_ids target_ids target_count completed_csv completed_count
-  local target_index target_id ready_ids active_ids round latest_review verdict hint
+  local target_index target_id ready_ids active_ids round latest_review verdict hint epic_id
   ref="$1"; max_round="$2"; model="$3"; output_format="$4"; verbose="$5"; partial="$6"; hook_events="$7"; humanize_mode="$8"; claude_env_file="${9:-}"; retry="${10:-3}"; retry_delay="${11:-10}"; review_strategy="${12:-final}"; worker_provider="${13:-claude}"
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG --yolo"
   case "$review_strategy" in
@@ -2367,6 +2399,8 @@ cmd_run_yolo() {
     child_ids="$(handoff_child_task_ids "$slug" 2>/dev/null || true)"
     [ -n "$child_ids" ] || die "YOLO Epic mode could not find materialized child Beads tasks in handoff: $slug"
     target_count="$(printf '%s\n' "$child_ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+    epic_id="$(yolo_epic_bd_id "$slug" 2>/dev/null || true)"
+    yolo_mark_epic_in_progress "$epic_id"
   else
     target_ids="$(yolo_target_ids_for_ref "$ref" "$slug" 2>/dev/null || true)"
     [ -n "$target_ids" ] || die "YOLO mode could not resolve Beads task target(s) for: $ref"

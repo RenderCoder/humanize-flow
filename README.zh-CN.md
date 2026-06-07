@@ -109,7 +109,7 @@ humanize-flow run <handoff-slug-or-epic-id> --yolo
 humanize-flow run <handoff-slug-or-epic-id> --yolo --max-round 5 --retry 5 --retry-delay 20
 ```
 
-YOLO 会强制 `--humanize-mode off`；恢复运行时会从已经关闭的 Beads 子任务恢复进度，并优先继续已标记为 `in_progress` 的 handoff 子任务；每个剩余 Epic 子任务开始前都会重新查询 Beads ready 状态；并把基础设施重试和业务修正轮数分开。默认情况下，YOLO 会先实现所有 ready 的 handoff 子任务，再做一次全局 Codex review/correction 循环。需要旧的逐子任务 review 节奏时，使用 `--review-each-task`。默认业务修正轮数是 5，也可以用 `humanize-flow config set yolo.max_round 5` 持久化。
+YOLO 会强制 `--humanize-mode off`；Epic 范围运行会把对应 Beads Epic 标记为 `in_progress`；恢复运行时会从已经关闭的 Beads 子任务恢复进度，并优先继续已标记为 `in_progress` 的 handoff 子任务；每个剩余 Epic 子任务开始前都会重新查询 Beads ready 状态；并把基础设施重试和业务修正轮数分开。默认情况下，YOLO 会先实现所有 ready 的 handoff 子任务，再做一次全局 Codex review/correction 循环。需要旧的逐子任务 review 节奏时，使用 `--review-each-task`。默认业务修正轮数是 5，也可以用 `humanize-flow config set yolo.max_round 5` 持久化。
 
 如果希望用 Codex 替代 Claude Code 执行 YOLO 实现，可以一次性设置 worker provider：
 
