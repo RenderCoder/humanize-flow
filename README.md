@@ -96,6 +96,13 @@ humanize-flow run <bd-id>
 
 Use `run-next` when you want Humanize Flow to choose from the ready queue and prompt if multiple groups are available.
 
+Use `--worktree` when starting from the main checkout and you want the implementation isolated in a Beads-managed worktree. Humanize Flow checks whether the current directory is already a `bd worktree`; if not, it creates `../feature-<bd-id>` on branch `feature/<bd-id>` with `bd worktree create` and continues the worker command there:
+
+```bash
+humanize-flow run-next --worktree
+humanize-flow run <bd-id> --worktree
+```
+
 Worker runs default to Claude Code print mode with detailed progress visible in the terminal, model `claude-sonnet-4-6`, permission mode `bypassPermissions`, and `claude.humanize=required`. Codex planner/reviewer/commit/PR runs use your normal Codex defaults unless configured with `humanize-flow config`. Review and review-feedback default to Codex yolo mode so prompts do not block the review loop. To supervise the work in a Claude Code UI, run:
 
 ```bash

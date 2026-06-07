@@ -111,6 +111,8 @@ It should not silently expand scope. Discovered work should become a new Beads i
 
 In non-interactive scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use the deterministic fallback selection.
 
+Use `humanize-flow run-next --worktree` to keep implementation work out of the main checkout. After selecting a ready task, the CLI checks `bd worktree info`; if the current directory is not already a Beads worktree, it creates `../feature-<bd-id>` on branch `feature/<bd-id>` with `bd worktree create` and continues the worker command there.
+
 ## Review usage
 
 The reviewer should use Beads data as one source of truth, but it must also inspect the approved handoff, `plan.md`, `acceptance.md`, and git diff. If the approved Markdown artifacts are missing, the correct verdict is `blocked`.

@@ -45,7 +45,7 @@ Commands:
                                Mark a handoff as approved; optionally create Beads tasks from it.
   materialize-bd SLUG          Create Beads epic/tasks from an approved handoff manifest.
   run BD_ID_OR_SLUG [options]  Run the configured worker for one Beads task.
-  run-next                     Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
+  run-next [--worktree]        Pick a ready Beads task, asking for Epic/task selection when needed, then run it.
   review BD_ID_OR_SLUG         Run Codex reviewer for one Beads task.
   review-feedback BD_ID_OR_SLUG [--note TEXT|--from FILE] [--review FILE]
                                Merge human review/test feedback into a new Codex review report.
@@ -97,7 +97,9 @@ Examples:
   humanize-flow i18n zh
   humanize-flow approve undo-redo --materialize-bd
   humanize-flow run-next
+  humanize-flow run-next --worktree
   humanize-flow run bd-a1b2 --yolo
+  humanize-flow run bd-a1b2 --worktree
   humanize-flow review bd-a1b2
   humanize-flow review-feedback bd-a1b2
   humanize-flow commit
@@ -136,6 +138,106 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 state_dir() { printf '%s/.humanize-flow\n' "$(repo_root)"; }
 docs_dir() { printf '%s/docs/humanize-flow\n' "$(repo_root)"; }
 handoff_path() { printf '%s/handoffs/%s.json\n' "$(state_dir)" "$1"; }
+
+worktree_safe_name() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+raw = sys.argv[1].strip().lower()
+safe = re.sub(r'[^a-z0-9._-]+', '-', raw).strip('.-')
+safe = re.sub(r'-{2,}', '-', safe)
+print(safe or 'task')
+PY
+}
+
+bd_current_is_worktree() {
+  command_exists bd || return 1
+  bd worktree info --json 2>/dev/null | python3 -c 'import json, sys; raise SystemExit(0 if json.load(sys.stdin).get("is_worktree") else 1)' 2>/dev/null
+}
+
+bd_worktree_path_for_branch() {
+  local branch
+  branch="$1"
+  command_exists bd || return 1
+  bd worktree list --json 2>/dev/null | python3 - "$branch" <<'PY'
+import json
+import sys
+
+branch = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+items = data if isinstance(data, list) else []
+for item in items:
+    if isinstance(item, dict) and item.get('branch') == branch and item.get('path'):
+        print(item['path'])
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+run_in_bd_worktree() {
+  local ref subcommand safe name branch existing_path create_output worktree_path
+  ref="$1"; subcommand="$2"; shift 2
+  command_exists bd || die "bd CLI not found; --worktree requires bd worktree support."
+  safe="$(worktree_safe_name "$ref")"
+  name="feature-$safe"
+  branch="feature/$safe"
+  existing_path="$(bd_worktree_path_for_branch "$branch" 2>/dev/null || true)"
+  if [ -n "$existing_path" ]; then
+    worktree_path="$existing_path"
+    info "using existing bd worktree for $ref: $worktree_path"
+  else
+    info "creating bd worktree for $ref: ../$name (branch $branch)"
+    create_output="$(bd worktree create "../$name" --branch "$branch")" || die "bd worktree create failed for $ref"
+    log "$create_output"
+    worktree_path="$(printf '%s\n' "$create_output" | sed -n 's/^.*Created worktree: //p' | tail -n 1)"
+    if [ -z "$worktree_path" ]; then
+      worktree_path="$(bd_worktree_path_for_branch "$branch" 2>/dev/null || true)"
+    fi
+    [ -n "$worktree_path" ] || die "Could not determine created worktree path for branch $branch"
+  fi
+  copy_missing_handoff_artifacts_to_worktree "$ref" "$worktree_path"
+  info "continuing $subcommand in bd worktree: $worktree_path"
+  ( cd "$worktree_path" && "$DIST_ROOT/bin/humanize-flow" "$subcommand" "$@" )
+}
+
+copy_missing_file_to_worktree() {
+  local source_file target_root rel target_file target_dir
+  source_file="$1"; target_root="$2"
+  [ -f "$source_file" ] || return 0
+  rel="$(repo_relative_path "$source_file")"
+  target_file="$target_root/$rel"
+  if [ -e "$target_file" ]; then
+    return 0
+  fi
+  target_dir="$(dirname "$target_file")"
+  mkdir -p "$target_dir"
+  cp "$source_file" "$target_file"
+}
+
+copy_missing_tree_to_worktree() {
+  local source_dir target_root source_file
+  source_dir="$1"; target_root="$2"
+  [ -d "$source_dir" ] || return 0
+  find "$source_dir" -type f -print | while IFS= read -r source_file; do
+    copy_missing_file_to_worktree "$source_file" "$target_root"
+  done
+}
+
+copy_missing_handoff_artifacts_to_worktree() {
+  local ref target_root slug handoff_file docs_slug_dir
+  ref="$1"; target_root="$2"
+  slug="$(find_handoff_for_ref "$ref" 2>/dev/null || true)"
+  [ -n "$slug" ] || return 0
+  handoff_file="$(handoff_path "$slug")"
+  docs_slug_dir="$(docs_dir)/$slug"
+  copy_missing_file_to_worktree "$handoff_file" "$target_root"
+  copy_missing_tree_to_worktree "$docs_slug_dir" "$target_root"
+  info "copied missing Humanize Flow artifacts for $slug into bd worktree"
+}
 user_config_path() { printf '%s/humanize-flow/config.json\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
 
 repo_relative_path() {
@@ -2583,15 +2685,18 @@ cmd_run_yolo() {
 
 cmd_run() {
   require_git_repo
-  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay review_strategy review_strategy_explicit worker_provider
+  local ref mode model permission_mode output_format verbose partial hook_events humanize_mode claude_env_file yolo max_round retry retry_delay review_strategy review_strategy_explicit worker_provider use_worktree
+  local -a original_args passthrough_args
+  original_args=("$@")
   ref=""; mode="print"; model="$(claude_model_default)"; permission_mode="$(claude_permission_mode_default)"
   humanize_mode="$(claude_humanize_default)"
   claude_env_file="$(claude_env_file_default)"
   worker_provider="$(worker_provider_default)"
-  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round="$(yolo_max_round_default)"; retry=3; retry_delay=10; review_strategy="$(yolo_review_strategy_default)"; review_strategy_explicit=0
+  output_format="stream-json"; verbose=1; partial=1; hook_events=1; yolo=0; max_round="$(yolo_max_round_default)"; retry=3; retry_delay=10; review_strategy="$(yolo_review_strategy_default)"; review_strategy_explicit=0; use_worktree=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --interactive|-i) mode="interactive" ;;
+      --worktree) use_worktree=1 ;;
       --model) shift; model="${1:-}" ;;
       --permission-mode) shift; permission_mode="${1:-}" ;;
       --humanize) humanize_mode="required" ;;
@@ -2628,6 +2733,7 @@ Options:
   --humanize-mode MODE       Set humanize mode: required, auto, or off.
   --env-file FILE            Load Claude Code provider/auth env vars from FILE for this run.
   --no-env-file              Ignore configured HUMANIZE_FLOW_CLAUDE_ENV_FILE / claude.env_file.
+  --worktree                 If not already in a bd worktree, create one with bd worktree create and run there.
   --yolo                     Run worker+Codex review loop until pass or max rounds. Forces --humanize-mode off.
   --review-at-end            With --yolo Epic/handoff runs, skip per-child reviews and run one final full-scope review.
   --final-review-only        Alias for --review-at-end.
@@ -2650,6 +2756,14 @@ EOF
     shift
   done
   [ -n "$ref" ] || die "Usage: humanize-flow run BD_ID_OR_SLUG"
+  if [ "$use_worktree" -eq 1 ] && ! bd_current_is_worktree; then
+    passthrough_args=()
+    for arg in "${original_args[@]}"; do
+      if [ "$arg" != "--worktree" ]; then passthrough_args+=("$arg"); fi
+    done
+    run_in_bd_worktree "$ref" run "${passthrough_args[@]}"
+    return 0
+  fi
   worker_provider="$(normalize_worker_provider "$worker_provider")" || die "Unsupported worker provider: $worker_provider (supported: claude, codex)"
   [ -n "$model" ] || die "Claude model cannot be empty."
   [ -n "$permission_mode" ] || die "Claude permission mode cannot be empty."
@@ -2670,7 +2784,27 @@ EOF
 cmd_run_next() {
   require_git_repo
   command_exists bd || die "bd CLI not found."
-  local tmp bd_id
+  local tmp bd_id use_worktree
+  use_worktree=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --worktree) use_worktree=1 ;;
+      --help|-h)
+        cat <<'EOF'
+Usage:
+  humanize-flow run-next [--worktree]
+
+Picks a ready Beads task, asking for Epic/task selection when needed, then runs it.
+
+Options:
+  --worktree   If not already in a bd worktree, create one for the selected task and run there.
+EOF
+        return 0 ;;
+      --*) die "Unknown run-next option: $1" ;;
+      *) die "Unexpected run-next argument: $1" ;;
+    esac
+    shift
+  done
   tmp="$(state_dir)/tmp/bd-ready-$(timestamp).json"
   mkdir -p "$(dirname "$tmp")"
   bd ready --json > "$tmp"
@@ -2840,10 +2974,14 @@ elif ready:
 if chosen:
     print(chosen)
 PY
-)"
+  )"
   [ -n "$bd_id" ] || die "No ready Beads task found."
   info "selected ready task: $bd_id"
-  cmd_run "$bd_id"
+  if [ "$use_worktree" -eq 1 ]; then
+    cmd_run "$bd_id" --worktree
+  else
+    cmd_run "$bd_id"
+  fi
 }
 
 cmd_review() {

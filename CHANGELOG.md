@@ -4,6 +4,10 @@ All notable changes to humanize-flow will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Add `--worktree` for `humanize-flow run` and `run-next`, creating a Beads-managed `feature/<bd-id>` worktree when execution starts from the main checkout.
+
 ### Changed
 
 - Make `humanize-flow commit` exclude generated Humanize Flow planning/review artifacts by default, with `--with-doc` to include them intentionally.

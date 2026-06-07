@@ -147,15 +147,27 @@ When the target is a handoff slug or Beads Epic ID, YOLO treats the handoff as a
 
 Use `--interactive` to open a Claude Code interactive session with the same generated worker prompt. Use `--text` when you want Claude's text-only output without raw event capture.
 
+Use `--worktree` when starting implementation from the main repository checkout and you want each task isolated in a Beads-managed worktree:
+
+```bash
+humanize-flow run <bd-id> --worktree
+humanize-flow run <bd-id> --worktree --yolo
+```
+
+If the current directory is already a `bd worktree`, `--worktree` is a no-op and the worker runs in place. Otherwise the CLI creates `../feature-<bd-id>` on branch `feature/<bd-id>` with `bd worktree create`, then continues the same `run` command inside the new worktree. This keeps Beads state shared through Beads' redirect file while avoiding implementation changes in the main checkout.
+
 ## `humanize-flow run-next`
 
 Pick a ready Beads task and run the worker.
 
 ```bash
 humanize-flow run-next
+humanize-flow run-next --worktree
 ```
 
 When multiple ready tasks or Epic groups exist and stdin is interactive, the CLI asks which group/task to run before starting Claude Code. In non-interactive scripts, set `HUMANIZE_FLOW_NONINTERACTIVE=1` to use the deterministic fallback selection.
+
+With `--worktree`, `run-next` first chooses the ready task, then applies the same Beads-managed worktree behavior as `run --worktree`.
 
 ## `humanize-flow config`
 

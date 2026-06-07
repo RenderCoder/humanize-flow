@@ -96,6 +96,13 @@ humanize-flow run <bd-id>
 
 希望 Humanize Flow 从 ready 队列中选择任务，并在存在多个分组时提示你选择时，用 `run-next`。
 
+从主 checkout 开始执行、并希望实现改动隔离在 Beads 管理的 worktree 中时，可以使用 `--worktree`。Humanize Flow 会检查当前目录是否已经是 `bd worktree`；如果不是，它会通过 `bd worktree create` 创建 `../feature-<bd-id>`，分支名为 `feature/<bd-id>`，然后在新 worktree 中继续执行 worker 命令：
+
+```bash
+humanize-flow run-next --worktree
+humanize-flow run <bd-id> --worktree
+```
+
 Worker 默认使用 Claude Code print 模式，在终端显示适合人阅读的详细进展，模型为 `claude-sonnet-4-6`，权限模式为 `bypassPermissions`，并设置 `claude.humanize=required`。Codex planner/reviewer/commit/PR 默认使用你的正常 Codex 配置；如果通过 `humanize-flow config` 设置了模型或 reasoning effort，则使用配置值。Review 和 review-feedback 默认使用 Codex yolo 模式，避免权限提示阻塞 review 循环。如果希望在 Claude Code UI 中监督执行，可以运行：
 
 ```bash

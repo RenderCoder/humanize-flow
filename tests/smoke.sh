@@ -120,6 +120,55 @@ JSON
     fi
     printf '{"id":"%s","status":"closed"}\n' "$id"
     ;;
+  worktree)
+    shift
+    case "${1:-}" in
+      info)
+        if [ -n "${BD_WORKTREE_IS_WORKTREE:-}" ]; then
+          cat <<JSON
+{"is_worktree":true,"path":"${BD_WORKTREE_CURRENT_PATH:-$PWD}","branch":"feature/bd-1234"}
+JSON
+        else
+          printf '{"is_worktree":false}\n'
+        fi
+        ;;
+      list)
+        if [ -n "${BD_WORKTREE_EXISTING_PATH:-}" ]; then
+          cat <<JSON
+[
+  {"name":"feature-bd-1234","path":"$BD_WORKTREE_EXISTING_PATH","branch":"feature/bd-1234","is_main":false,"beads_state":"redirect"}
+]
+JSON
+        else
+          printf '[]\n'
+        fi
+        ;;
+      create)
+        shift
+        path="${1:-}"
+        shift || true
+        branch=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --branch) shift; branch="${1:-}" ;;
+            --branch=*) branch="${1#--branch=}" ;;
+          esac
+          shift || true
+        done
+        if [ -n "${BD_WORKTREE_CREATE_ARGS_CAPTURE:-}" ]; then
+          printf 'path=%s\nbranch=%s\n' "$path" "$branch" > "$BD_WORKTREE_CREATE_ARGS_CAPTURE"
+        fi
+        target="${BD_WORKTREE_CREATE_TARGET:-$PWD/$path}"
+        mkdir -p "$target"
+        git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1 && git -C "$target" init -q >/dev/null 2>&1 || true
+        printf '✓ Created worktree: %s\n  Branch: %s\n' "$target" "$branch"
+        ;;
+      *)
+        echo "fake bd worktree only supports info, list, and create" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   create)
     printf '%s\n' "$@" > "$BD_CREATE_ARGS_CAPTURE"
     cat <<'JSON'
@@ -127,7 +176,7 @@ JSON
 JSON
     ;;
   *)
-    echo "fake bd only supports show, ready, and create" >&2
+    echo "fake bd only supports show, ready, close, worktree, and create" >&2
     exit 2
     ;;
 esac
@@ -455,6 +504,18 @@ ENV
   test "$("$ROOT/bin/humanize-flow" config get claude.humanize)" = "auto"
   CLAUDE_ARGS_CAPTURE="$TMP/claude-auto-humanize-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 >/dev/null
   grep -q 'Claude humanize mode: auto' "$TMP/claude-auto-humanize-args.txt"
+  mkdir -p "$TMP/worktree-run-target"
+  git -C "$TMP/worktree-run-target" init -q
+  git -C "$TMP/worktree-run-target" config user.email smoke@example.com
+  git -C "$TMP/worktree-run-target" config user.name "Smoke Test"
+  BD_WORKTREE_CREATE_TARGET="$TMP/worktree-run-target" BD_WORKTREE_CREATE_ARGS_CAPTURE="$TMP/bd-worktree-create-args.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-worktree-run-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --worktree --no-humanize >"$TMP/worktree-run.stdout"
+  grep -q 'path=../feature-bd-1234' "$TMP/bd-worktree-create-args.txt"
+  grep -q 'branch=feature/bd-1234' "$TMP/bd-worktree-create-args.txt"
+  grep -q 'continuing run in bd worktree' "$TMP/worktree-run.stdout"
+  grep -q 'bd-1234' "$TMP/claude-worktree-run-args.txt"
+  BD_WORKTREE_IS_WORKTREE=1 BD_WORKTREE_CREATE_ARGS_CAPTURE="$TMP/bd-worktree-existing-create-args.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-worktree-existing-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-1234 --worktree --no-humanize >"$TMP/worktree-existing.stdout"
+  test ! -f "$TMP/bd-worktree-existing-create-args.txt"
+  ! grep -q 'creating bd worktree' "$TMP/worktree-existing.stdout"
   "$ROOT/bin/humanize-flow" config set claude.humanize required >/dev/null
   "$ROOT/bin/humanize-flow" config set worker.provider codex >/dev/null
   test "$("$ROOT/bin/humanize-flow" config get worker.provider)" = "codex"
@@ -467,6 +528,15 @@ ENV
   "$ROOT/bin/humanize-flow" config set worker.provider claude >/dev/null
   HUMANIZE_FLOW_NONINTERACTIVE=1 CLAUDE_ARGS_CAPTURE="$TMP/claude-run-next-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run-next >/dev/null
   grep -q 'bd-1234' "$TMP/claude-run-next-args.txt"
+  mkdir -p "$TMP/worktree-run-next-target"
+  git -C "$TMP/worktree-run-next-target" init -q
+  git -C "$TMP/worktree-run-next-target" config user.email smoke@example.com
+  git -C "$TMP/worktree-run-next-target" config user.name "Smoke Test"
+  HUMANIZE_FLOW_NONINTERACTIVE=1 BD_WORKTREE_CREATE_TARGET="$TMP/worktree-run-next-target" BD_WORKTREE_CREATE_ARGS_CAPTURE="$TMP/bd-worktree-run-next-create-args.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-run-next-worktree-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run-next --worktree >"$TMP/run-next-worktree.stdout"
+  grep -q 'selected ready task: bd-1234' "$TMP/run-next-worktree.stdout"
+  grep -q 'path=../feature-bd-1234' "$TMP/bd-worktree-run-next-create-args.txt"
+  grep -q 'branch=feature/bd-1234' "$TMP/bd-worktree-run-next-create-args.txt"
+  grep -q 'bd-1234' "$TMP/claude-run-next-worktree-args.txt"
   test "$(find .humanize-flow/runs -name claude-final.jsonl -print | wc -l | tr -d ' ')" -gt 0
   grep -R '\[result\] success' .humanize-flow/runs >/dev/null
   CODEX_ARGS_CAPTURE="$TMP/codex-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >/dev/null
