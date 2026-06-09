@@ -4,6 +4,39 @@ IFS=$'\n\t'
 
 dry_run=0
 
+color_enabled() {
+  local fd
+  fd="$1"
+  [ -z "${NO_COLOR:-}" ] || return 1
+  [ -t "$fd" ]
+}
+
+colorize() {
+  local fd code text
+  fd="$1"; code="$2"; text="$3"
+  if color_enabled "$fd"; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+emit() {
+  local fd icon color label prefix
+  fd="$1"; icon="$2"; color="$3"; label="$4"
+  shift 4
+  prefix="$(colorize "$fd" "$color" "$icon [uninstall] $label")"
+  if [ "$fd" = "2" ]; then
+    printf '%s %s\n' "$prefix" "$*" >&2
+  else
+    printf '%s %s\n' "$prefix" "$*"
+  fi
+}
+
+info() { emit 1 "ℹ️" "34" "INFO:" "$*"; }
+success() { emit 1 "✅" "32" "SUCCESS:" "$*"; }
+die() { emit 2 "❌" "31" "ERROR:" "$*"; exit 1; }
+
 usage() {
   cat <<'EOF'
 Uninstall user-level humanize-flow files.
@@ -25,7 +58,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
     --help|-h) usage; exit 0 ;;
-    *) printf '[uninstall] ERROR: unknown option: %s\n' "$1" >&2; exit 1 ;;
+    *) die "unknown option: $1" ;;
   esac
   shift
 done
@@ -34,10 +67,10 @@ remove_path() {
   local p
   p="$1"
   if [ "$dry_run" -eq 1 ]; then
-    printf '[uninstall] would remove %s\n' "$p"
+    info "would remove $p"
   else
     rm -rf "$p"
-    printf '[uninstall] removed %s\n' "$p"
+    success "removed $p"
   fi
 }
 

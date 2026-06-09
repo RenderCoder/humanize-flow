@@ -10,9 +10,39 @@ install_codex=1
 install_claude=1
 install_bin=1
 
-info() { printf '[install] %s\n' "$*"; }
-die() { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
-warn() { printf '[install] WARN: %s\n' "$*" >&2; }
+color_enabled() {
+  local fd
+  fd="$1"
+  [ -z "${NO_COLOR:-}" ] || return 1
+  [ -t "$fd" ]
+}
+
+colorize() {
+  local fd code text
+  fd="$1"; code="$2"; text="$3"
+  if color_enabled "$fd"; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+emit() {
+  local fd icon color label prefix
+  fd="$1"; icon="$2"; color="$3"; label="$4"
+  shift 4
+  prefix="$(colorize "$fd" "$color" "$icon [install] $label")"
+  if [ "$fd" = "2" ]; then
+    printf '%s %s\n' "$prefix" "$*" >&2
+  else
+    printf '%s %s\n' "$prefix" "$*"
+  fi
+}
+
+info() { emit 1 "ℹ️" "34" "INFO:" "$*"; }
+success() { emit 1 "✅" "32" "SUCCESS:" "$*"; }
+die() { emit 2 "❌" "31" "ERROR:" "$*"; exit 1; }
+warn() { emit 2 "⚠️" "33" "WARN:" "$*"; }
 
 usage() {
   cat <<'EOF'
@@ -113,9 +143,9 @@ if [ "$install_bin" -eq 1 ]; then
 fi
 
 if [ "$dry_run" -eq 0 ]; then
-  info "installed $PROJECT_NAME"
+  success "installed $PROJECT_NAME"
   case ":$PATH:" in *":$BIN_DIR:"*) ;; *) warn "Add $BIN_DIR to PATH to run humanize-flow directly." ;; esac
   if command -v humanize-flow >/dev/null 2>&1; then humanize-flow doctor || true; else "$BIN_DIR/humanize-flow" doctor || true; fi
 else
-  info "dry run complete"
+  success "dry run complete"
 fi

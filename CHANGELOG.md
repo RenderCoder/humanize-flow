@@ -6,6 +6,7 @@ All notable changes to humanize-flow will be documented in this file.
 
 ### Changed
 
+- Make CLI, installer, validation, packaging, and status output use clearer emoji state markers and terminal colors for success, warning, and error messages.
 - Make `humanize-flow commit` exclude generated Humanize Flow planning/review artifacts by default, with `--with-doc` to include them intentionally.
 
 ## [0.5.9] - 2026-05-16

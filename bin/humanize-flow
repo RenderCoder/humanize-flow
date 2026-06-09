@@ -19,9 +19,53 @@ HF_DEFAULT_REVIEW_SANDBOX="danger-full-access"
 HF_DEFAULT_REVIEW_YOLO="true"
 
 log() { printf '%s\n' "$*"; }
-info() { printf '[humanize-flow] %s\n' "$*"; }
-warn() { printf '[humanize-flow] WARN: %s\n' "$*" >&2; }
-die() { printf '[humanize-flow] ERROR: %s\n' "$*" >&2; exit 1; }
+
+color_enabled() {
+  local fd
+  fd="$1"
+  [ -z "${NO_COLOR:-}" ] || return 1
+  [ -t "$fd" ]
+}
+
+colorize() {
+  local fd code text
+  fd="$1"; code="$2"; text="$3"
+  if color_enabled "$fd"; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+emit() {
+  local fd icon color label prefix
+  fd="$1"; icon="$2"; color="$3"; label="$4"
+  shift 4
+  prefix="$(colorize "$fd" "$color" "$icon [$HF_NAME] $label")"
+  if [ "$fd" = "2" ]; then
+    printf '%s %s\n' "$prefix" "$*" >&2
+  else
+    printf '%s %s\n' "$prefix" "$*"
+  fi
+}
+
+info() { emit 1 "ℹ️" "34" "INFO:" "$*"; }
+success() { emit 1 "✅" "32" "SUCCESS:" "$*"; }
+warn() { emit 2 "⚠️" "33" "WARN:" "$*"; }
+die() { emit 2 "❌" "31" "ERROR:" "$*"; exit 1; }
+
+doctor_line() {
+  local status text icon color label
+  status="$1"; shift
+  text="$*"
+  case "$status" in
+    ok) icon="✅"; color="32"; label="OK" ;;
+    warn) icon="⚠️"; color="33"; label="WARN" ;;
+    fail) icon="❌"; color="31"; label="FAIL" ;;
+    *) icon="ℹ️"; color="34"; label="INFO" ;;
+  esac
+  printf '  %s %s %s\n' "$icon" "$(colorize 1 "$color" "$label")" "$text"
+}
 
 usage() {
   cat <<'EOF'
@@ -764,7 +808,7 @@ EOF
         *) die "Unsupported config key: $key" ;;
       esac
       json_set "$file" "$key" "$value"
-      info "set $key=$value in $file"
+      success "set $key=$value in $file"
       ;;
     --help|-h|help)
       cat <<'EOF'
@@ -823,7 +867,7 @@ EOF
     en|zh|zh-CN|zh_CN|en-US|en_US)
       lang="$(normalize_language "$lang")"
       json_set "$(user_config_path)" "language" "$lang"
-      info "set language=$lang in $(user_config_path)"
+      success "set language=$lang in $(user_config_path)"
       ;;
     *)
       die "Unsupported language: $lang (supported: en, zh)"
@@ -957,60 +1001,60 @@ cmd_doctor() {
 
   for bin in git python3 gh codex claude bd jq; do
     if command_exists "$bin"; then
-      printf '  OK   %-10s %s\n' "$bin" "$(command -v "$bin")"
+      doctor_line ok "$(printf '%-10s %s' "$bin" "$(command -v "$bin")")"
     else
       case "$bin" in
         git|python3)
-          printf '  FAIL %-10s missing\n' "$bin"
+          doctor_line fail "$(printf '%-10s missing' "$bin")"
           failures=$((failures + 1))
           ;;
         *)
-          printf '  WARN %-10s missing\n' "$bin"
+          doctor_line warn "$(printf '%-10s missing' "$bin")"
           ;;
       esac
     fi
   done
 
   if [ -d "$HOME/.agents/skills/humanize-flow-planner" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-planner" ]; then
-    printf '  OK   codex skill humanize-flow-planner installed\n'
+    doctor_line ok "codex skill humanize-flow-planner installed"
   else
-    printf '  WARN codex skill humanize-flow-planner not found\n'
+    doctor_line warn "codex skill humanize-flow-planner not found"
   fi
 
   if [ -d "$HOME/.agents/skills/humanize-flow-bd-planner" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-bd-planner" ]; then
-    printf '  OK   codex skill humanize-flow-bd-planner installed\n'
+    doctor_line ok "codex skill humanize-flow-bd-planner installed"
   else
-    printf '  WARN codex skill humanize-flow-bd-planner not found\n'
+    doctor_line warn "codex skill humanize-flow-bd-planner not found"
   fi
 
   if [ -d "$HOME/.agents/skills/humanize-flow-reviewer" ] || [ -d "$(repo_root)/.agents/skills/humanize-flow-reviewer" ]; then
-    printf '  OK   codex skill humanize-flow-reviewer installed\n'
+    doctor_line ok "codex skill humanize-flow-reviewer installed"
   else
-    printf '  WARN codex skill humanize-flow-reviewer not found\n'
+    doctor_line warn "codex skill humanize-flow-reviewer not found"
   fi
 
   if [ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/humanize-flow-worker" ] || [ -d "$(repo_root)/.claude/skills/humanize-flow-worker" ]; then
-    printf '  OK   claude skill humanize-flow-worker installed\n'
+    doctor_line ok "claude skill humanize-flow-worker installed"
   else
-    printf '  WARN claude skill humanize-flow-worker not found\n'
+    doctor_line warn "claude skill humanize-flow-worker not found"
   fi
 
   if humanize_path="$(humanize_integration_path 2>/dev/null || true)" && [ -n "$humanize_path" ]; then
-    printf '  OK   humanize integration found: %s\n' "$humanize_path"
+    doctor_line ok "humanize integration found: $humanize_path"
   else
     if [ "$(claude_humanize_default)" = "required" ]; then
-      printf '  FAIL humanize integration not detected (claude.humanize=required)\n'
+      doctor_line fail "humanize integration not detected (claude.humanize=required)"
       failures=$((failures + 1))
     else
-      printf '  WARN humanize integration not detected (claude.humanize=$(claude_humanize_default))\n'
+      doctor_line warn "humanize integration not detected (claude.humanize=$(claude_humanize_default))"
     fi
   fi
 
   if command_exists gh; then
     if gh auth status >/dev/null 2>&1; then
-      printf '  OK   gh auth status\n'
+      doctor_line ok "gh auth status"
     else
-      printf '  WARN gh auth status failed; run gh auth login before using humanize-flow pr\n'
+      doctor_line warn "gh auth status failed; run gh auth login before using humanize-flow pr"
     fi
   fi
 
@@ -1067,7 +1111,7 @@ EOF
   if [ "$with_bd" -eq 1 ]; then
     if command_exists bd; then
       if bd info >/dev/null 2>&1; then
-        info "Beads already initialized."
+        success "Beads already initialized."
       else
         if [ "$stealth" -eq 1 ]; then
           info "running bd init --stealth"
@@ -1082,7 +1126,7 @@ EOF
     fi
   fi
 
-  info "initialized $(repo_root)"
+  success "initialized $(repo_root)"
 }
 
 write_request_file() {
@@ -1166,7 +1210,7 @@ Follow the humanize-flow-planner skill exactly:
 EOF
 
   info "planner prompt: $prompt_file"
-  if [ "$no_codex" -eq 1 ]; then info "--no-codex set; prompt written but not executed."; return 0; fi
+  if [ "$no_codex" -eq 1 ]; then success "--no-codex set; prompt written but not executed."; return 0; fi
   command_exists codex || die "codex CLI not found."
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
@@ -1293,7 +1337,7 @@ EOF
 
   info "bd planner prompt: $prompt_file"
   info "captured bd source: $source_file"
-  if [ "$no_codex" -eq 1 ]; then info "--no-codex set; prompt written but not executed."; return 0; fi
+  if [ "$no_codex" -eq 1 ]; then success "--no-codex set; prompt written but not executed."; return 0; fi
   command_exists codex || die "codex CLI not found."
   prompt_text="$(cat "$prompt_file")"
   # shellcheck disable=SC2086
@@ -1333,7 +1377,7 @@ with open(path, 'w', encoding='utf-8') as f:
     f.write('\n')
 print(path)
 PY
-  info "approved $slug"
+  success "approved $slug"
   if [ "$materialize" -eq 1 ]; then cmd_materialize_bd "$slug"; fi
 }
 
@@ -2434,7 +2478,7 @@ cmd_run_yolo() {
         if ! yolo_phase_with_retries "$retry" "$retry_delay" "close implemented Beads task" "$target_id" yolo_mark_child_implemented "$target_id"; then
           die "YOLO could not close implemented Beads task $target_id in final-review mode. Retry later with: $hint"
         fi
-        info "YOLO marked Beads task implemented pending final review: $target_id"
+        success "YOLO marked Beads task implemented pending final review: $target_id"
         completed_csv="${completed_csv:+$completed_csv,}$target_id"
         completed_count=$((completed_count + 1))
         continue
@@ -2469,11 +2513,11 @@ cmd_run_yolo() {
         info "YOLO review verdict for $target_id: $verdict"
         case "$verdict" in
           pass)
-            info "YOLO target $target_id completed after $round round(s): review passed."
+            success "YOLO target $target_id completed after $round round(s): review passed."
             if ! yolo_phase_with_retries "$retry" "$retry_delay" "close Beads task" "$target_id" yolo_mark_child_complete "$target_id" "$latest_review"; then
               die "YOLO could not close Beads task $target_id after passing review. Retry later with: $hint"
             fi
-            info "YOLO marked Beads task complete: $target_id"
+            success "YOLO marked Beads task complete: $target_id"
             break
             ;;
           changes_requested|blocked)
@@ -2505,7 +2549,7 @@ cmd_run_yolo() {
         info "YOLO final review verdict for $ref: $verdict"
         case "$verdict" in
           pass)
-            info "YOLO mode completed all target(s); final full-scope review passed."
+            success "YOLO mode completed all target(s); final full-scope review passed."
             return 0
             ;;
           changes_requested|blocked)
@@ -2528,7 +2572,7 @@ cmd_run_yolo() {
         round=$((round + 1))
       done
     fi
-    info "YOLO mode completed all target(s)."
+    success "YOLO mode completed all target(s)."
     return 0
   fi
 
@@ -2561,7 +2605,7 @@ cmd_run_yolo() {
       info "YOLO review verdict for $target_id: $verdict"
       case "$verdict" in
         pass)
-          info "YOLO target $target_id completed after $round round(s): review passed."
+          success "YOLO target $target_id completed after $round round(s): review passed."
           break
           ;;
         changes_requested|blocked)
@@ -2578,7 +2622,7 @@ cmd_run_yolo() {
     done
     target_index=$((target_index + 1))
   done
-  info "YOLO mode completed all target(s)."
+  success "YOLO mode completed all target(s)."
 }
 
 cmd_run() {
@@ -2938,7 +2982,7 @@ EOF
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_review" "$review_file"
   fi
-  info "review written: $review_file"
+  success "review written: $review_file"
 }
 
 cmd_review_feedback() {
@@ -3105,7 +3149,7 @@ EOF
     set_handoff_artifact "$slug" "latest_review" "$output_file"
     set_handoff_artifact "$slug" "latest_human_feedback" "$feedback_file"
   fi
-  info "updated review written: $output_file"
+  success "updated review written: $output_file"
 }
 
 cmd_verify() {
@@ -3199,7 +3243,7 @@ PY
   if [ -n "$slug" ]; then
     set_handoff_artifact "$slug" "latest_human_verification" "$verification_file"
   fi
-  info "human verification recorded: $verification_file"
+  success "human verification recorded: $verification_file"
   info "next: humanize-flow commit, humanize-flow push, humanize-flow pr, or continue ready work with humanize-flow run-next"
 }
 
@@ -3279,7 +3323,7 @@ create_commit_failure_bd() {
   read -r answer
   case "$answer" in
     y|Y|yes|YES) ;;
-    *) info "skipped Beads task creation for commit failure."; return 0 ;;
+    *) success "skipped Beads task creation for commit failure."; return 0 ;;
   esac
 
   prompt_file="$run_dir/codex-hook-failure-bd-prompt.md"
@@ -3375,7 +3419,7 @@ if cp.returncode != 0:
 output_path.write_text(cp.stdout, encoding="utf-8")
 print(cp.stdout.strip())
 PY
-  info "created Beads task for commit failure; output saved: $output_file"
+  success "created Beads task for commit failure; output saved: $output_file"
 }
 
 handle_commit_failure() {
@@ -4139,7 +4183,7 @@ EOF
     set -e
     if [ "$apply_status" -eq 0 ]; then
       stash_result="restored; autostash retained at $stash_ref"
-      info "stashed work restored; retained autostash at $stash_ref for safety"
+      success "stashed work restored; retained autostash at $stash_ref for safety"
     else
       conflicts_before="$(git_unmerged_paths)"
       if [ -z "$conflicts_before" ]; then
@@ -4207,7 +4251,7 @@ EOF
         die "Codex returned but stash restore conflicts remain. See $run_dir/remaining-stash-conflicted-files.txt. Autostash is still saved at $stash_ref."
       fi
       stash_result="restore-conflicts-resolved; autostash retained at $stash_ref"
-      info "stashed work restored after conflict resolution; retained autostash at $stash_ref for safety"
+      success "stashed work restored after conflict resolution; retained autostash at $stash_ref for safety"
       fi
     fi
   fi
@@ -4248,7 +4292,7 @@ EOF
   info "impact assessment prompt: $impact_prompt_file"
   prompt_text="$(cat "$impact_prompt_file")"
   run_codex_exec --sandbox read-only "$prompt_text" | tee "$impact_file"
-  info "pull-main complete; impact report: $impact_file"
+  success "pull-main complete; impact report: $impact_file"
 }
 
 cmd_pr_resolve() {
@@ -4348,7 +4392,7 @@ EOF
     integrate_status=$?
     set -e
     if [ "$integrate_status" -eq 0 ]; then
-      info "target branch integrated cleanly; log: $log_file"
+      success "target branch integrated cleanly; log: $log_file"
       if [ "$strategy" = "merge" ] && [ "$no_push" -ne 1 ]; then
         push_remote="$remote"
         [ -n "$push_remote" ] || push_remote="$(current_branch_push_remote)"
@@ -4443,7 +4487,7 @@ EOF
     die "Codex returned but unmerged paths remain. See $run_dir/remaining-conflicted-files.txt and $final_file"
   fi
 
-  info "conflicts resolved; Codex report: $final_file"
+  success "conflicts resolved; Codex report: $final_file"
   if [ "$strategy" = "rebase" ] || [ "$state" = "rebase" ]; then
     info "next step: run tests, stage resolved files if needed, then git rebase --continue"
   else
@@ -4454,7 +4498,7 @@ EOF
     info "creating merge-resolution commit"
     cmd_commit --yes
     if [ "$no_push" -eq 1 ]; then
-      info "--no-push set; merge-resolution commit created but not pushed."
+      success "--no-push set; merge-resolution commit created but not pushed."
       return 0
     fi
     push_remote="$remote"
@@ -4666,8 +4710,8 @@ PY
   pr_url="$(printf '%s\n' "$pr_output" | grep -Eo 'https://[^[:space:]]+' | sed -n '1p')"
   if [ -n "$pr_url" ]; then
     printf '%s\n' "$pr_url" > "$pr_url_file"
-    info "PR creation output: $pr_output_file"
-    info "PR URL saved: $pr_url_file"
+    success "PR creation output: $pr_output_file"
+    success "PR URL saved: $pr_url_file"
     printf 'Pull request URL: %s\n' "$pr_url"
   else
     warn "GitHub CLI did not print a pull request URL. Raw output saved: $pr_output_file"
@@ -5102,8 +5146,17 @@ with open(sys.argv[1], encoding='utf-8') as fh:
 def line(text=''):
     print(text)
 
-line('Humanize Flow Status')
-line(f"- State: {data.get('state', 'unknown')}")
+state = data.get('state', 'unknown')
+state_icon = {
+    'ready': '✅',
+    'active': 'ℹ️',
+    'needs_attention': '⚠️',
+    'failed': '❌',
+    'blocked': '⛔',
+}.get(state, 'ℹ️')
+
+line('Humanize Flow Status ℹ️')
+line(f"- State: {state_icon} {state}")
 line(f"- Summary: {data.get('summary', '')}")
 git = data.get('git') or {}
 line(f"- Git: {git.get('branch_status', '') or '(unknown)'}; changes={'yes' if git.get('has_changes') else 'no'}")
@@ -5114,20 +5167,20 @@ line(f"- Version: {data.get('humanize_flow_version', '')}")
 warnings = data.get('warnings') or []
 if warnings:
     line('')
-    line('Warnings:')
+    line('Warnings: ⚠️')
     for item in warnings:
         line(f"- {item}")
 
 actions = data.get('next_actions') or []
 if actions:
     line('')
-    line('Next Actions:')
+    line('Next Actions: ➡️')
     for item in actions:
         line(f"- {item}")
 
 runs = data.get('recent_runs') or []
 line('')
-line('Recent Activity:')
+line('Recent Activity: 🧭')
 if not runs:
     line("- No run/review activity found.")
 else:
@@ -5139,7 +5192,7 @@ else:
 
 reviews = data.get('recent_reviews') or []
 line('')
-line('Recent Reviews:')
+line('Recent Reviews: 📝')
 if not reviews:
     line("- No review artifacts found.")
 else:
@@ -5148,7 +5201,7 @@ else:
 
 ready = data.get('ready') or []
 line('')
-line('Ready Beads:')
+line('Ready Beads: ✅')
 if not ready:
     line("- None reported by bd ready.")
 else:
@@ -5159,7 +5212,7 @@ else:
 
 handoffs = data.get('handoffs') or []
 line('')
-line('Handoffs:')
+line('Handoffs: 📦')
 if not handoffs:
     line("- No handoffs found.")
 else:
@@ -5172,7 +5225,7 @@ else:
 inner = data.get('inner_rlcr') or []
 if inner:
     line('')
-    line('Inner humanize/RLCR:')
+    line('Inner humanize/RLCR: 🔁')
     for item in inner[:5]:
         signal = item.get('latest_signal') or 'unknown'
         line(f"- {signal}: {item.get('latest_review_result') or item.get('path')}")
@@ -5248,7 +5301,7 @@ EOF
     info "status explain prompt: $prompt_file"
     prompt_text="$(cat "$prompt_file")"
     run_codex_exec --sandbox read-only "$prompt_text" | tee "$explain_file"
-    info "status explanation written: $explain_file"
+    success "status explanation written: $explain_file"
     return 0
   fi
   snapshot_file="$(state_dir)/tmp/status-snapshot-$(timestamp).json"

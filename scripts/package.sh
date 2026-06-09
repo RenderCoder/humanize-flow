@@ -11,10 +11,34 @@ esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-if [ -e "$OUT" ]; then
-  printf '[package] ERROR: output already exists: %s\n' "$OUT" >&2
-  printf '[package] choose a different output path or remove the existing archive first.\n' >&2
+color_enabled() {
+  local fd
+  fd="$1"
+  [ -z "${NO_COLOR:-}" ] || return 1
+  [ -t "$fd" ]
+}
+
+colorize() {
+  local fd code text
+  fd="$1"; code="$2"; text="$3"
+  if color_enabled "$fd"; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+success() {
+  printf '%s %s\n' "$(colorize 1 "32" "✅ [package] SUCCESS:")" "$*"
+}
+
+die() {
+  printf '%s %s\n' "$(colorize 2 "31" "❌ [package] ERROR:")" "$*" >&2
   exit 1
+}
+
+if [ -e "$OUT" ]; then
+  die "output already exists: $OUT. Choose a different output path or remove the existing archive first."
 fi
 
 mkdir -p "$TMP/humanize-flow"
@@ -36,4 +60,4 @@ mkdir -p "$TMP/humanize-flow"
   cd "$TMP"
   zip -qr "$OUT" humanize-flow
 )
-printf '[package] wrote %s\n' "$OUT"
+success "wrote $OUT"
