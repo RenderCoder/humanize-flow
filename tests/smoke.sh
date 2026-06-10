@@ -220,6 +220,15 @@ case "$*" in
     printf '{"title":"Fix commit hook eslint failure","description":"Commit hook failed because eslint was unavailable.","priority":2,"labels":["humanize-flow","commit-hook","eslint"]}\n'
     ;;
   *"updating a Humanize Flow review with human manual-test feedback"*)
+    if [ -n "${CODEX_WRAP_REVIEW_OUTPUT:-}" ]; then
+      printf 'hook: Stop\n'
+      printf 'hook: Stop Completed\n'
+      printf '已完成 Humanize Flow 审查并写入：\n\n'
+      printf '[review.md](docs/humanize-flow/imported-task/reviews/review.md)\n\n'
+      printf '结论：`Humanize-Flow-Verdict: changes_requested`\n\n'
+      printf '# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
+      exit 0
+    fi
     printf 'Humanize-Flow-Verdict: changes_requested\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`changes_requested`\n\n## Summary\n\nHuman feedback found a manual-test issue.\n\n## Human correction options\n\n- Suggested command: `humanize-flow run bd-1234`\n'
     ;;
   *"You are the Codex implementer in the Humanize Flow workflow."*)
@@ -255,6 +264,15 @@ case "$*" in
         printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review: bd-1234\n\n## Verdict\n\n`pass`\n\n## Summary\n\nYOLO second review passed.\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
       fi
     else
+      if [ -n "${CODEX_WRAP_REVIEW_OUTPUT:-}" ]; then
+        printf 'hook: Stop\n'
+        printf 'hook: Stop Completed\n'
+        printf '已完成 Humanize Flow 审查并写入：\n\n'
+        printf '[review.md](docs/humanize-flow/imported-task/reviews/review.md)\n\n'
+        printf '结论：`Humanize-Flow-Verdict: pass`\n\n'
+        printf '# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
+        exit 0
+      fi
       printf 'Humanize-Flow-Verdict: pass\n\n# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
     fi
     ;;
@@ -490,6 +508,16 @@ ENV
   grep -q 'Task id: bd-1234' "$TMP/codex-review-task-args.txt"
   grep -q 'Review only Beads task `bd-1234` within handoff `imported-task`' "$TMP/codex-review-task-args.txt"
   grep -q 'Do not require sibling tasks from the same Epic/handoff to be complete' "$TMP/codex-review-task-args.txt"
+  before_wrapped_count="$(find docs/humanize-flow/imported-task/reviews -name '*.md' -print | wc -l | tr -d ' ')"
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-wrapped-args.txt" CODEX_WRAP_REVIEW_OUTPUT=1 PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review imported-task >"$TMP/codex-review-wrapped.stdout" 2>"$TMP/codex-review-wrapped.stderr"
+  after_wrapped_count="$(find docs/humanize-flow/imported-task/reviews -name '*.md' -print | wc -l | tr -d ' ')"
+  test "$after_wrapped_count" -gt "$before_wrapped_count"
+  wrapped_review="$(ls docs/humanize-flow/imported-task/reviews/*.md | tail -n 1)"
+  test "$(sed -n '1p' "$wrapped_review")" = "Humanize-Flow-Verdict: pass"
+  grep -q 'fake review' "$wrapped_review"
+  ! grep -q '已完成 Humanize Flow 审查并写入' "$wrapped_review"
+  grep -R '已完成 Humanize Flow 审查并写入' .humanize-flow/runs/*/codex-reviewer-output.md >/dev/null
+  grep -q 'normalized Codex review output into canonical verdict format' "$TMP/codex-review-wrapped.stderr"
   PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" verify bd-1234 --yes --note "Manual smoke verification passed." >/dev/null
   test "$(find .humanize-flow/verifications -name '*.json' -print | wc -l | tr -d ' ')" -gt 0
   python3 - <<'PY'
@@ -530,6 +558,14 @@ PY
   grep -q 'Prior review:' "$TMP/codex-review-feedback-args.txt"
   grep -R 'Manual test found an overlap' .humanize-flow/runs/*/human-feedback.md >/dev/null
   grep -R 'Human feedback found a manual-test issue' docs/humanize-flow/imported-task/reviews >/dev/null
+  printf 'Manual test found another overlap in the empty state.\n' > manual-feedback-wrapped.md
+  CODEX_ARGS_CAPTURE="$TMP/codex-review-feedback-wrapped-args.txt" CODEX_WRAP_REVIEW_OUTPUT=1 PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" review-feedback imported-task --from manual-feedback-wrapped.md >"$TMP/codex-review-feedback-wrapped.stdout" 2>"$TMP/codex-review-feedback-wrapped.stderr"
+  wrapped_feedback_review="$(ls docs/humanize-flow/imported-task/reviews/*-human-feedback.md | tail -n 1)"
+  test "$(sed -n '1p' "$wrapped_feedback_review")" = "Humanize-Flow-Verdict: changes_requested"
+  grep -q 'Human feedback found a manual-test issue' "$wrapped_feedback_review"
+  ! grep -q '已完成 Humanize Flow 审查并写入' "$wrapped_feedback_review"
+  grep -R '结论：`Humanize-Flow-Verdict: changes_requested`' .humanize-flow/runs/*/codex-review-feedback-output.md >/dev/null
+  grep -q 'normalized Codex review-feedback output into canonical verdict format' "$TMP/codex-review-feedback-wrapped.stderr"
   cat > "$TMP/fake-bin/editor" <<'EDITOR'
 #!/usr/bin/env bash
 set -euo pipefail

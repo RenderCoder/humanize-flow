@@ -11,6 +11,7 @@ All notable changes to humanize-flow will be documented in this file.
 
 ### Fixed
 
+- Normalize common Codex wrapper output before parsing `review` and `review-feedback` verdicts, while preserving the raw Codex stream under `.humanize-flow/runs/` for diagnosis.
 - Mark the Beads Epic itself `in_progress` when an Epic-scoped `humanize-flow run ... --yolo` starts, so dashboards show active Epic work while child tasks run.
 
 ## [0.5.9] - 2026-05-16

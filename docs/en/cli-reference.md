@@ -225,7 +225,7 @@ Review defaults to yolo mode and passes Codex `--dangerously-bypass-approvals-an
 
 When the verdict is `pass`, the review report includes a human verification guide with manual test steps and a checklist to complete before commit/push. When the verdict is `changes_requested` or `blocked`, the report includes human correction options that can be fed into `review-feedback`.
 
-Review reports also include one machine-readable ASCII verdict line such as `Humanize-Flow-Verdict: pass`. That line is not localized; it is the stable contract used by `run --yolo`, `status`, `verify`, and PR guide collection.
+Review reports also include one machine-readable ASCII verdict line such as `Humanize-Flow-Verdict: pass`. That line is not localized; it is the stable contract used by `run --yolo`, `status`, `verify`, and PR guide collection. If Codex wraps an otherwise valid review in completion prose, the CLI saves the raw stream under `.humanize-flow/runs/` and normalizes the final review artifact back to the canonical first-line verdict format. Output without one unique extractable `Humanize-Flow-Verdict` still fails as malformed.
 
 ## `humanize-flow verify`
 

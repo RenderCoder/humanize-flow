@@ -225,7 +225,7 @@ humanize-flow review <bd-id> --sandbox workspace-write
 
 当 verdict 是 `pass` 时，review 报告会包含人类验证指南，包括手工测试步骤和提交/推送前检查清单。当 verdict 是 `changes_requested` 或 `blocked` 时，报告会包含人类校正选项，可继续交给 `review-feedback` 合并。
 
-Review 报告还会包含一行给程序解析的 ASCII verdict，例如 `Humanize-Flow-Verdict: pass`。这一行不会被本地化；它是 `run --yolo`、`status`、`verify` 和 PR 验证指南收集逻辑使用的稳定契约。
+Review 报告还会包含一行给程序解析的 ASCII verdict，例如 `Humanize-Flow-Verdict: pass`。这一行不会被本地化；它是 `run --yolo`、`status`、`verify` 和 PR 验证指南收集逻辑使用的稳定契约。如果 Codex 给原本有效的 review 外层包了一段完成说明，CLI 会把原始输出保存到 `.humanize-flow/runs/`，并把最终 review artifact 规范化回首行 verdict 格式。若输出里没有唯一可提取的 `Humanize-Flow-Verdict`，仍会按格式错误失败。
 
 ## `humanize-flow verify`
 

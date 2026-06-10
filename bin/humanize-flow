@@ -2063,6 +2063,81 @@ raise SystemExit(1)
 PY
 }
 
+normalize_review_output() {
+  local raw_file output_file
+  raw_file="$1"; output_file="$2"
+  [ -f "$raw_file" ] || return 1
+  python3 - "$raw_file" "$output_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+raw_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+text = raw_path.read_text(encoding='utf-8', errors='replace').replace('\ufeff', '')
+lines = text.splitlines()
+
+canonical = re.compile(r'^\s*Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\s*$', re.I)
+embedded = re.compile(r'Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\b', re.I)
+
+first_non_empty = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+if first_non_empty is not None:
+    match = canonical.match(lines[first_non_empty])
+    if match:
+        output_path.write_text(text.rstrip() + '\n', encoding='utf-8')
+        print('unchanged')
+        raise SystemExit(0)
+
+verdicts = []
+canonical_line = None
+embedded_line = None
+for idx, line in enumerate(lines):
+    match = canonical.match(line)
+    if match:
+        verdicts.append(match.group(1).lower())
+        if canonical_line is None:
+            canonical_line = idx
+        continue
+    match = embedded.search(line)
+    if match:
+        verdicts.append(match.group(1).lower())
+        if embedded_line is None:
+            embedded_line = idx
+
+unique_verdicts = sorted(set(verdicts))
+if len(unique_verdicts) != 1:
+    raise SystemExit(1)
+
+verdict = unique_verdicts[0]
+source_line = canonical_line if canonical_line is not None else embedded_line
+if source_line is None:
+    raise SystemExit(1)
+
+body_start = None
+for idx in range(source_line + 1, len(lines)):
+    if re.match(r'^\s*#{1,6}\s+\S', lines[idx]):
+        body_start = idx
+        break
+if body_start is None:
+    for idx in range(source_line + 1, len(lines)):
+        if lines[idx].strip():
+            body_start = idx
+            break
+
+if body_start is None:
+    body = text.strip()
+else:
+    body = '\n'.join(lines[body_start:]).strip()
+if not body:
+    body = text.strip()
+if not body.lstrip().startswith('#'):
+    body = '## Original Codex output\n\n' + body
+
+output_path.write_text(f'Humanize-Flow-Verdict: {verdict}\n\n{body.rstrip()}\n', encoding='utf-8')
+print('normalized')
+PY
+}
+
 handoff_artifact_path() {
   local slug key file value root
   slug="$1"; key="$2"
@@ -2930,7 +3005,7 @@ PY
 
 cmd_review() {
   require_git_repo
-  local ref="" bd_id slug file run_dir prompt_file review_dir review_file base prompt_text sandbox yolo
+  local ref="" bd_id slug file run_dir prompt_file review_dir review_file raw_review_file base prompt_text sandbox yolo normalized
   sandbox="$(review_sandbox_default)"
   yolo="$(review_yolo_default)"
   while [ $# -gt 0 ]; do
@@ -2969,6 +3044,7 @@ EOF
   run_dir="$(state_dir)/runs/$(timestamp)-review-$ref"
   mkdir -p "$run_dir"
   prompt_file="$run_dir/codex-reviewer-prompt.md"
+  raw_review_file="$run_dir/codex-reviewer-output.md"
   review_dir="$(docs_dir)/${slug:-unknown}/reviews"
   mkdir -p "$review_dir"
   review_file="$review_dir/$(timestamp)-$ref.md"
@@ -3009,12 +3085,16 @@ EOF
   fi
   prompt_text="$(cat "$prompt_file")"
   if [ "$yolo" = "true" ]; then
-    run_codex_exec --yolo "$prompt_text" | tee "$review_file"
+    run_codex_exec --yolo "$prompt_text" | tee "$raw_review_file"
   else
-    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$review_file"
+    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$raw_review_file"
   fi
-  if [ ! -s "$review_file" ]; then
+  if [ ! -s "$raw_review_file" ]; then
     die "review command produced an empty review artifact: $review_file"
+  fi
+  normalized="$(normalize_review_output "$raw_review_file" "$review_file" 2>/dev/null)" || die "review command did not produce a parseable verdict in: $review_file (raw output: $raw_review_file)"
+  if [ "$normalized" = "normalized" ]; then
+    warn "normalized Codex review output into canonical verdict format: $review_file (raw output: $raw_review_file)"
   fi
   review_verdict "$review_file" >/dev/null 2>&1 || die "review command did not produce a parseable verdict in: $review_file"
   if [ -n "$slug" ]; then
@@ -3025,7 +3105,7 @@ EOF
 
 cmd_review_feedback() {
   require_git_repo
-  local ref="" note="" from_file="" review_file="" bd_id slug file run_dir prompt_file feedback_file output_file review_dir base prompt_text safe_ref editor sandbox yolo
+  local ref="" note="" from_file="" review_file="" bd_id slug file run_dir prompt_file feedback_file output_file raw_output_file review_dir base prompt_text safe_ref editor sandbox yolo normalized
   sandbox="$(review_sandbox_default)"
   yolo="$(review_yolo_default)"
   while [ $# -gt 0 ]; do
@@ -3089,6 +3169,7 @@ EOF
   mkdir -p "$run_dir"
   prompt_file="$run_dir/codex-review-feedback-prompt.md"
   feedback_file="$run_dir/human-feedback.md"
+  raw_output_file="$run_dir/codex-review-feedback-output.md"
   review_dir="$(docs_dir)/${slug:-unknown}/reviews"
   mkdir -p "$review_dir"
   safe_ref="$(slugify "$ref")"
@@ -3175,12 +3256,16 @@ EOF
   fi
   prompt_text="$(cat "$prompt_file")"
   if [ "$yolo" = "true" ]; then
-    run_codex_exec --yolo "$prompt_text" | tee "$output_file"
+    run_codex_exec --yolo "$prompt_text" | tee "$raw_output_file"
   else
-    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$output_file"
+    run_codex_exec --sandbox "$sandbox" "$prompt_text" | tee "$raw_output_file"
   fi
-  if [ ! -s "$output_file" ]; then
+  if [ ! -s "$raw_output_file" ]; then
     die "review-feedback command produced an empty review artifact: $output_file"
+  fi
+  normalized="$(normalize_review_output "$raw_output_file" "$output_file" 2>/dev/null)" || die "review-feedback command did not produce a parseable verdict in: $output_file (raw output: $raw_output_file)"
+  if [ "$normalized" = "normalized" ]; then
+    warn "normalized Codex review-feedback output into canonical verdict format: $output_file (raw output: $raw_output_file)"
   fi
   review_verdict "$output_file" >/dev/null 2>&1 || die "review-feedback command did not produce a parseable verdict in: $output_file"
   if [ -n "$slug" ]; then
