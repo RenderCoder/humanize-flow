@@ -143,7 +143,7 @@ Claude provider 环境文件是显式启用的。默认情况下，`run` 使用 
 
 YOLO 只自动化实现和 Codex review，不会自动完成人工验证门禁。review `pass` 后，应先按报告里的 `Human verification guide` 完成人工测试，然后运行 `humanize-flow verify <bd-id>`，再执行 `commit`、`push`、`pr` 或 release 这类交付命令。
 
-当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会把 handoff 当作 Epic 队列处理。启动时，它会读取 handoff 子任务，并从已经关闭的 Beads 子任务恢复进度，所以中断后重试不会丢失已完成子任务计数。如果剩余 handoff 子任务已经是 `in_progress`，YOLO 会先继续这个子任务，再查询 ready 队列；这可以处理 Beads 已把子任务移出 `ready` 但执行过程被中断的情况。每个其他剩余子任务开始前，它都会重新查询 `bd ready --json`，把 ready 集合和 handoff 中剩余子任务求交集，并按 Beads ready 顺序选择下一个 ready 子任务。handoff 只限制允许执行的子任务集合，不施加静态执行顺序；尚未 ready 的子任务会等 Beads 依赖解锁后再执行。使用默认最终 review 调度时，每个子任务实现后会以“等待最终 review”的 reason 关闭，让下游依赖可以先解锁，再做最终全局 review。使用 `--review-each-task` 时，每个子任务都有自己的 worker 修正循环和 Codex review，review 通过后 CLI 会在 close reason 中记录通过的 review artifact 路径。
+当目标是 handoff slug 或 Beads Epic ID 时，YOLO 会把 handoff 当作 Epic 队列处理。启动时，它会先把 Beads Epic 本身标记为 `in_progress`，读取 handoff 子任务，并从已经关闭的 Beads 子任务恢复进度，所以中断后重试不会丢失已完成子任务计数。如果剩余 handoff 子任务已经是 `in_progress`，YOLO 会先继续这个子任务，再查询 ready 队列；这可以处理 Beads 已把子任务移出 `ready` 但执行过程被中断的情况。每个其他剩余子任务开始前，它都会重新查询 `bd ready --json`，把 ready 集合和 handoff 中剩余子任务求交集，并按 Beads ready 顺序选择下一个 ready 子任务。handoff 只限制允许执行的子任务集合，不施加静态执行顺序；尚未 ready 的子任务会等 Beads 依赖解锁后再执行。使用默认最终 review 调度时，每个子任务实现后会以“等待最终 review”的 reason 关闭，让下游依赖可以先解锁，再做最终全局 review。使用 `--review-each-task` 时，每个子任务都有自己的 worker 修正循环和 Codex review，review 通过后 CLI 会在 close reason 中记录通过的 review artifact 路径。
 
 使用 `--interactive` 可以用同一个 worker prompt 打开 Claude Code 交互会话。使用 `--text` 可以使用 Claude 的纯文本输出，不保存原始事件流。
 

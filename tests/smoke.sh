@@ -120,6 +120,15 @@ JSON
     fi
     printf '{"id":"%s","status":"closed"}\n' "$id"
     ;;
+  update)
+    shift
+    id="${1:-}"
+    shift || true
+    if [ -n "${BD_UPDATE_ARGS_CAPTURE:-}" ]; then
+      printf '%s %s\n' "$id" "$*" >> "$BD_UPDATE_ARGS_CAPTURE"
+    fi
+    printf '{"id":"%s","status":"in_progress"}\n' "$id"
+    ;;
   create)
     printf '%s\n' "$@" > "$BD_CREATE_ARGS_CAPTURE"
     cat <<'JSON'
@@ -127,7 +136,7 @@ JSON
 JSON
     ;;
   *)
-    echo "fake bd only supports show, ready, and create" >&2
+    echo "fake bd only supports show, ready, update, close, and create" >&2
     exit 2
     ;;
 esac
@@ -710,22 +719,26 @@ PY
   printf '# Acceptance\n' > docs/humanize-flow/epic-yolo/acceptance.md
   rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-each-task --max-round 2 >"$TMP/epic-yolo.stdout"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_UPDATE_ARGS_CAPTURE="$TMP/bd-update-args.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --review-each-task --max-round 2 >"$TMP/epic-yolo.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "4"
   test "$(cat "$TMP/yolo-review-count.txt")" = "4"
   grep -q 'Epic scheduling: dynamic via bd ready --json' "$TMP/epic-yolo.stdout"
+  grep -q 'YOLO marked Beads Epic in progress: bd-epic' "$TMP/epic-yolo.stdout"
+  grep -qx 'bd-epic --status in_progress' "$TMP/bd-update-args.txt"
   grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-args.txt"
   grep -q 'Review only Beads task `bd-epic.1` within handoff `epic-yolo`' "$TMP/codex-epic-yolo-review-args.txt"
   grep -qx 'bd-epic.1' "$TMP/bd-close-args.txt"
   grep -qx 'bd-epic.2' "$TMP/bd-close-args.txt"
   test "$(sed -n '1p' "$TMP/bd-close-args.txt")" = "bd-epic.2"
   test "$(sed -n '2p' "$TMP/bd-close-args.txt")" = "bd-epic.1"
-  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-close-args.txt"
+  rm -f "$TMP/yolo-claude-count.txt" "$TMP/yolo-review-count.txt" "$TMP/bd-update-args.txt" "$TMP/bd-close-args.txt"
   : > "$TMP/bd-ready-dynamic-state.txt"
-  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo-final.stdout"
+  BD_READY_DYNAMIC_STATE="$TMP/bd-ready-dynamic-state.txt" BD_UPDATE_ARGS_CAPTURE="$TMP/bd-update-args.txt" BD_CLOSE_ARGS_CAPTURE="$TMP/bd-close-args.txt" CLAUDE_RUN_COUNT="$TMP/yolo-claude-count.txt" CODEX_REVIEW_COUNT="$TMP/yolo-review-count.txt" CLAUDE_ARGS_CAPTURE="$TMP/claude-epic-yolo-final-args.txt" CODEX_ARGS_CAPTURE="$TMP/codex-epic-yolo-final-review-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" run bd-epic --yolo --max-round 2 >"$TMP/epic-yolo-final.stdout"
   test "$(cat "$TMP/yolo-claude-count.txt")" = "2"
   test "$(cat "$TMP/yolo-review-count.txt")" = "1"
   grep -q 'review strategy: final full-scope review after all child tasks' "$TMP/epic-yolo-final.stdout"
+  grep -q 'YOLO marked Beads Epic in progress: bd-epic' "$TMP/epic-yolo-final.stdout"
+  grep -qx 'bd-epic --status in_progress' "$TMP/bd-update-args.txt"
   grep -q 'YOLO final review round 1/2: Codex full handoff/Epic scope' "$TMP/epic-yolo-final.stdout"
   grep -q 'Review the full approved handoff scope for `epic-yolo`' "$TMP/codex-epic-yolo-final-review-args.txt"
   grep -q 'Task id: bd-epic.1' "$TMP/claude-epic-yolo-final-args.txt"
