@@ -49,6 +49,8 @@ humanize-flow plan --slug <slug> --request "<request text>"
 
 生成的 planner prompt 会包含当前工作流语言配置。默认是英文；使用 `humanize-flow i18n zh` 可切换到简体中文。语言策略会覆盖 `request.md`、`jira-requirement.md`、`plan.md`、`acceptance.md`、`bd-plan.md`、handoff prose，以及生成的 Beads epic/task 标题、描述和验收标准。
 
+对于非简单需求，当 Codex subagents 可用时，planner skill 默认采用自适应只读子 agent 规划。子 agent 可以并行收集仓库、风险/测试和任务边界上下文，但主 planner 是唯一负责写产物和 handoff JSON 的角色。很小或已经明确的需求可以跳过子 agent。
+
 `jira-requirement.md` 是面向内部协作系统的 Jira 风格 Markdown 需求。它应先说明 WHY/context，再说明 HOW/WHAT；主体内容使用跨职能团队能理解的语言，必要时把技术细节单独放到技术说明部分。
 
 ## `humanize-flow plan-from-bd`
@@ -82,6 +84,8 @@ docs/humanize-flow/<slug>/bd-source.json
 - `--no-codex`：只捕获任务并写 planner prompt，不实际执行 Codex。
 
 生成的 planner prompt 会把当前工作流语言应用到生成的规划 prose、`jira-requirement.md`、`bd-plan.md` 和 handoff `bd.*` 任务 prose，同时保留来源任务 ID 和机器可读字面量的原始形式。原始任务文本会保存在 `bd-source.json`。
+
+对于非简单的已有任务导入，当 Codex subagents 可用时，planner skill 默认采用自适应只读子 agent 规划。子 agent 可以并行检查来源任务、仓库上下文和风险/测试形状，但不得更新 Beads，也不得写最终产物。
 
 这条路径通常下一步是 `humanize-flow approve <slug>`，而不是 `approve --materialize-bd`，因为 Beads 任务已经存在。
 

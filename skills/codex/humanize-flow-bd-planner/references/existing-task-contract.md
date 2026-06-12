@@ -21,6 +21,20 @@ Do not overwrite or reinterpret those fields without saying so in the plan.
 
 Source preservation does not override the language policy. Keep raw source text in `bd-source.json` and source metadata such as `source.title`; write generated interpretation, scope, acceptance criteria, and handoff `bd.*` prose in the requested language.
 
+## Adaptive subagent planning
+
+For non-trivial existing-task imports, use adaptive subagent planning when Codex subagents are available. This should speed up context gathering without weakening the single-writer handoff contract.
+
+The main planner should keep ownership of the final interpretation and artifacts. Subagents are read-only investigators that return concise findings:
+
+- `source-task`: source Beads task meaning, dependencies, labels, parent/child relationships, and any existing Humanize Flow artifacts.
+- `repository-context`: relevant code paths, architecture, existing patterns, and likely files to change.
+- `risk-test`: ambiguity, edge cases, acceptance criteria, regression risks, and verification strategy.
+
+Subagents must not create duplicate Beads issues, update the source task, edit files, invoke Claude Code, or write final planning artifacts. The main planner must merge the findings, preserve the source task as the execution target, and document any interpretation or unresolved uncertainty in the plan.
+
+Skip subagents for tiny, already-obvious, or time-sensitive tasks where the coordination overhead is not justified. If subagents are unavailable, continue directly and note confidence limits when relevant.
+
 ## Handoff semantics
 
 For a direct execution task, the handoff should use:

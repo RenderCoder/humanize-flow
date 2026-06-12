@@ -27,6 +27,8 @@ Human-review Markdown output and generated Beads prose follow the configured wor
 
 `jira-requirement.md` should be written as a Jira-style requirement for cross-functional review: WHY/context first, plain-language stakeholder sections, and a separate technical notes section when needed.
 
+For non-trivial requests, the planner defaults to adaptive subagent planning when Codex subagents are available. Read-only subagents can inspect repository context, risk/test shape, and task boundaries in parallel, but the main planner remains the only writer of planning artifacts and handoff JSON. Tiny or obvious requests may skip subagents to avoid coordination overhead.
+
 ## `humanize-flow-bd-planner`
 
 Codex skill for **existing-Beads-task planning**.
@@ -58,6 +60,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 ```
 
 Human-review Markdown output and generated handoff task prose follow the configured workflow language and default to English. Source task text is preserved in `bd-source.json`; source task IDs and machine-readable literals remain canonical.
+
+For non-trivial imported Beads tasks, the planner defaults to adaptive subagent planning when Codex subagents are available. Read-only subagents can inspect the source task, repository context, and risk/test shape in parallel. They must not update Beads or write final artifacts; the main planner preserves the original task as the execution target and writes the final plan and handoff.
 
 Important handoff fields:
 

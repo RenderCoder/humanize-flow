@@ -8,6 +8,7 @@ All notable changes to humanize-flow will be documented in this file.
 
 - Make CLI, installer, validation, packaging, and status output use clearer emoji state markers and terminal colors for success, warning, and error messages.
 - Make `humanize-flow commit` exclude generated Humanize Flow planning/review artifacts by default, with `--with-doc` to include them intentionally.
+- Make Codex planner skills default to adaptive read-only subagent planning for substantive requests while keeping the main planner as the sole writer of artifacts and handoff JSON.
 
 ### Fixed
 

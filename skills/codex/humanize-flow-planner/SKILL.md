@@ -27,6 +27,20 @@ Your job is to turn a user request into a complete, reviewable, executable plan.
 5. **Prefer explicit assumptions over hidden guesses.** Low-risk assumptions are allowed only if documented in the plan and handoff.
 6. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. This includes `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, Beads epic/task titles, descriptions, and acceptance criteria. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, and Beads IDs in their canonical form.
 
+## Adaptive subagent planning
+
+Default to adaptive subagent planning for non-trivial requests when Codex subagents are available.
+
+For substantive planning tasks, the main planner should run 2-3 read-only subagents in parallel before writing artifacts:
+
+- `repository-context`: inspect relevant code, architecture, existing patterns, and likely files to change.
+- `risk-test`: identify ambiguity, behavioral risks, acceptance criteria, and verification strategy.
+- `task-shaping`: assess scope, possible Beads task splits, dependencies, and execution sequencing.
+
+Subagents must not write files, modify Beads, invoke Claude Code, or produce final planning artifacts. They return concise findings with file references and explicit uncertainty. The main planner waits for the findings, resolves conflicts, and remains the only writer of `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, and the handoff JSON.
+
+Skip subagents for tiny, single-file, already-obvious, or time-sensitive requests where delegation overhead is likely to exceed the benefit. If subagents are unavailable, continue with single-agent planning and note any resulting confidence limits in the plan.
+
 ## Required output artifacts
 
 For slug `<slug>`, write:
@@ -51,13 +65,14 @@ and stop without producing an executable handoff.
 ## Planning flow
 
 1. Identify the slug. Use lowercase kebab-case.
-2. Inspect repository structure and relevant files with read-only commands.
-3. Check Beads availability with `bd --version` or `bd info` when appropriate.
-4. Determine whether humanize/RLCR is likely useful for the execution phase.
-5. Ask clarifying questions if needed.
-6. Present the full plan to the user before materializing Beads tasks.
-7. Write the handoff in `draft` state with `approval.status=pending` unless explicit approval is given in-session.
-8. Tell the user the next exact command, usually `humanize-flow approve <slug> --materialize-bd`.
+2. Decide whether adaptive subagent planning applies. Use it by default for substantive requests.
+3. Inspect repository structure and relevant files with read-only commands, directly or through read-only subagents.
+4. Check Beads availability with `bd --version` or `bd info` when appropriate.
+5. Determine whether humanize/RLCR is likely useful for the execution phase.
+6. Ask clarifying questions if needed.
+7. Present the full plan to the user before materializing Beads tasks.
+8. Write the handoff in `draft` state with `approval.status=pending` unless explicit approval is given in-session.
+9. Tell the user the next exact command, usually `humanize-flow approve <slug> --materialize-bd`.
 
 ## Final response format
 

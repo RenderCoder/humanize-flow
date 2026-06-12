@@ -27,6 +27,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 
 `jira-requirement.md` 应写成便于跨职能评审的 Jira 风格需求：WHY/context 优先，主体面向业务和协作角色说人话，必要时单独提供技术说明。
 
+对于非简单需求，当 Codex subagents 可用时，planner 默认采用自适应子 agent 规划。只读子 agent 可以并行检查仓库上下文、风险/测试形状和任务边界；主 planner 仍然是唯一负责写规划产物和 handoff JSON 的角色。很小或已经很明确的需求可以跳过子 agent，避免协调成本。
+
 ## `humanize-flow-bd-planner`
 
 用于**已有 Beads 任务规划**的 Codex skill。
@@ -58,6 +60,8 @@ docs/humanize-flow/<slug>/bd-plan.md
 ```
 
 面向人工审核的 Markdown 产物和生成的 handoff 任务 prose 遵循工作流语言配置，默认使用英文。原始任务文本保存在 `bd-source.json`；来源任务 ID 和机器可读字面量保持原始形式。
+
+对于非简单的已有 Beads 任务导入，当 Codex subagents 可用时，planner 默认采用自适应子 agent 规划。只读子 agent 可以并行检查来源任务、仓库上下文和风险/测试形状。它们不得更新 Beads，也不得写最终产物；主 planner 会保留原始任务作为执行目标，并写出最终计划和 handoff。
 
 关键 handoff 字段：
 

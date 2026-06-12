@@ -54,6 +54,25 @@ find . -maxdepth 3 -type f | sed 's#^./##' | sort | head -200
 
 Use targeted reads after identifying likely components. Do not run expensive tests during planning unless the user asks.
 
+### Adaptive subagent planning
+
+For non-trivial requests, use adaptive subagent planning when Codex subagents are available. This is a planning accelerator, not a distributed writing workflow.
+
+The main planner should keep ownership of the plan and final artifacts. Subagents are read-only investigators that return concise findings:
+
+- `repository-context`: locate relevant modules, existing patterns, likely files to change, and architectural constraints.
+- `risk-test`: identify missing requirements, edge cases, acceptance criteria, regression risks, and test strategy.
+- `task-shaping`: propose Beads task boundaries, dependencies, sequencing, and whether humanize/RLCR is useful.
+
+Subagents must not:
+
+- write or edit files,
+- create, update, or close Beads issues,
+- invoke Claude Code or worker workflows,
+- produce final `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, or handoff JSON.
+
+The main planner must merge the findings, resolve conflicts, and document any important uncertainty or rejected interpretation in the final plan. Skip subagents for tiny, single-file, already-obvious, or time-sensitive requests where the coordination overhead is not justified. If subagents are unavailable, continue directly and note confidence limits when relevant.
+
 ## Phase 4: Discussion
 
 Ask questions when missing information changes the implementation path. Do not ask questions whose answers can be safely inferred from repository conventions.

@@ -49,6 +49,8 @@ Options:
 
 The generated planner prompt includes the configured workflow language. The default is English; use `humanize-flow i18n zh` to switch to Simplified Chinese. The language policy covers `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, handoff prose, and generated Beads epic/task titles, descriptions, and acceptance criteria.
 
+For substantive requests, the planner skill defaults to adaptive read-only subagent planning when Codex subagents are available. Subagents can gather repository, risk/test, and task-boundary context in parallel, but the main planner is the only writer of artifacts and handoff JSON. Tiny or obvious requests may skip subagents.
+
 `jira-requirement.md` is a Jira-style Markdown requirement for internal collaboration systems. It should explain WHY/context before HOW/WHAT, use plain language for cross-functional readers, and separate technical notes when needed.
 
 ## `humanize-flow plan-from-bd`
@@ -82,6 +84,8 @@ Options:
 - `--no-codex`: capture the task and write the planner prompt but do not execute it.
 
 The generated planner prompt applies the configured workflow language to generated planning prose, `jira-requirement.md`, `bd-plan.md`, and handoff `bd.*` task prose while preserving source IDs and machine-readable literals. Raw source task text is preserved in `bd-source.json`.
+
+For substantive imported tasks, the planner skill defaults to adaptive read-only subagent planning when Codex subagents are available. Subagents can inspect the source task, repository context, and risk/test shape in parallel, but they must not update Beads or write final artifacts.
 
 For this path, the next command is usually `humanize-flow approve <slug>` rather than `approve --materialize-bd`, because the Beads task already exists.
 

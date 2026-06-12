@@ -30,6 +30,20 @@ Your job is to read the existing task, clarify it with the human when necessary,
 6. **Discuss important ambiguity.** If the task is underspecified in a way that can change architecture, data model, UX, security, permissions, migrations, or test scope, ask concise questions before finalizing.
 7. **Follow the language policy.** Use the language requested by the user or CLI prompt for human-facing artifacts. Default to English when no language policy is provided. This includes `request.md`, `jira-requirement.md`, `plan.md`, `acceptance.md`, `bd-plan.md`, `questions.md`, handoff prose fields, and generated `bd.*` task title, description, and acceptance criteria fields. Keep JSON field names, enum values, labels, file paths, commands, APIs, code identifiers, source task IDs, and Beads IDs in their canonical form. Preserve raw source task text in `bd-source.json` and source metadata; do not let source language override the requested language for generated planning prose.
 
+## Adaptive subagent planning
+
+Default to adaptive subagent planning for non-trivial existing-task imports when Codex subagents are available.
+
+For substantive Beads tasks, the main planner should run 2-3 read-only subagents in parallel before writing artifacts:
+
+- `source-task`: inspect the captured Beads task, dependencies, labels, and existing Humanize Flow artifacts.
+- `repository-context`: inspect relevant code, architecture, existing patterns, and likely files to change.
+- `risk-test`: identify missing task details, behavioral risks, acceptance criteria, and verification strategy.
+
+Subagents must not write files, modify Beads, duplicate the source task, invoke Claude Code, or produce final planning artifacts. They return concise findings with file references and explicit uncertainty. The main planner waits for the findings, preserves the source task as the execution target, resolves conflicts, and remains the only writer of generated Markdown and handoff JSON.
+
+Skip subagents for tiny, already-obvious, or time-sensitive tasks where delegation overhead is likely to exceed the benefit. If subagents are unavailable, continue with single-agent planning and note any resulting confidence limits in the plan.
+
 ## Required input
 
 The user or CLI must provide at least one existing Beads task ID. Prefer a single task ID for the first version of this workflow.
@@ -77,14 +91,15 @@ and stop without producing an executable handoff.
 
 1. Identify the source Beads task ID.
 2. Read the task with `bd show <bd-id> --json` or the provided `bd-source.json`.
-3. Inspect nearby repository context with read-only commands.
-4. Summarize the task back to the human, including what is explicit, inferred, and missing.
-5. Ask clarifying questions if important ambiguity remains.
-6. Present the complete plan before execution begins.
-7. Write the handoff in `draft` state with `approval.status=pending` unless explicit approval is given in-session.
-8. Set `source.type="beads"`, `source.bd_id=<bd-id>`, and `execution.current_bd_id=<bd-id>` in the handoff.
-9. Set `bd.materialized=true` and include the existing task in `bd.tasks` with its `bd_id`; do not prepare duplicate tasks unless the user explicitly approves a split.
-10. Tell the user the next exact command, usually `humanize-flow approve <slug>` followed by `humanize-flow run <bd-id>`.
+3. Decide whether adaptive subagent planning applies. Use it by default for substantive tasks.
+4. Inspect nearby repository context with read-only commands, directly or through read-only subagents.
+5. Summarize the task back to the human, including what is explicit, inferred, and missing.
+6. Ask clarifying questions if important ambiguity remains.
+7. Present the complete plan before execution begins.
+8. Write the handoff in `draft` state with `approval.status=pending` unless explicit approval is given in-session.
+9. Set `source.type="beads"`, `source.bd_id=<bd-id>`, and `execution.current_bd_id=<bd-id>` in the handoff.
+10. Set `bd.materialized=true` and include the existing task in `bd.tasks` with its `bd_id`; do not prepare duplicate tasks unless the user explicitly approves a split.
+11. Tell the user the next exact command, usually `humanize-flow approve <slug>` followed by `humanize-flow run <bd-id>`.
 
 ## When the existing task is too broad
 
