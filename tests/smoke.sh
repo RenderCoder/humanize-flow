@@ -366,6 +366,27 @@ chmod +x "$TMP/fake-bin/gh"
   grep -q 'stash restore was blocked without merge conflicts' "$TMP/pull-main-stash.stderr"
 )
 (
+  mkdir -p "$TMP/commit-noop-repo"
+  cd "$TMP/commit-noop-repo"
+  git init -q
+  git config user.email smoke@example.com
+  git config user.name "Smoke Test"
+  printf 'base\n' > base.txt
+  git add base.txt
+  git commit -qm 'Initial commit noop baseline'
+  no_commit_head="$(git rev-parse HEAD)"
+  mkdir -p docs/humanize-flow/commit-test-done .humanize-flow/tmp .humanize-flow/runs/manual
+  printf 'remaining plan\n' > docs/humanize-flow/commit-test-done/plan.md
+  printf 'tmp\n' > .humanize-flow/tmp/commit-test.json
+  printf 'run\n' > .humanize-flow/runs/manual/output.txt
+  CODEX_COMMIT_SELECTION="NONE" CODEX_ARGS_CAPTURE="$TMP/codex-commit-none-args.txt" PATH="$TMP/fake-bin:$PATH" "$ROOT/bin/humanize-flow" commit --yes >"$TMP/commit-none.stdout"
+  test "$(git rev-parse HEAD)" = "$no_commit_head"
+  grep -q 'all commit-eligible changes are already committed' "$TMP/commit-none.stdout"
+  grep -q 'run humanize-flow commit --with-doc' "$TMP/commit-none.stdout"
+  grep -R '^docs/humanize-flow/commit-test-done/plan.md$' .humanize-flow/runs/*/excluded-commit-paths.txt >/dev/null
+  grep -R '^.humanize-flow/tmp/commit-test.json$' .humanize-flow/runs/*/excluded-commit-paths.txt >/dev/null
+)
+(
   cd "$TMP/repo"
   git init -q
   git config user.email smoke@example.com

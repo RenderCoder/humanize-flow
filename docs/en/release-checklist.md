@@ -10,7 +10,7 @@ make package
 If a default `humanize-flow.zip` already exists, write a versioned archive instead:
 
 ```bash
-bash scripts/package.sh humanize-flow-0.5.9.zip
+bash scripts/package.sh humanize-flow-0.5.10.zip
 ```
 
 Then inspect:

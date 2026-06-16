@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.9"
+HF_VERSION="0.5.10"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -3412,6 +3412,35 @@ humanize_flow_doc_artifact_path() {
   esac
 }
 
+collect_excluded_commit_remainder() {
+  local with_doc output_file line path count
+  with_doc="$1"
+  output_file="$2"
+  count=0
+  : > "$output_file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    path="${line#???}"
+    case "$path" in
+      *" -> "*) path="${path##* -> }" ;;
+    esac
+    if humanize_flow_runtime_artifact_path "$path"; then
+      printf '%s\n' "$path" >> "$output_file"
+      count=$((count + 1))
+      continue
+    fi
+    if [ "$with_doc" -ne 1 ] && humanize_flow_doc_artifact_path "$path"; then
+      printf '%s\n' "$path" >> "$output_file"
+      count=$((count + 1))
+      continue
+    fi
+    return 1
+  done <<EOF
+$(git status --porcelain --untracked-files=all)
+EOF
+  [ "$count" -gt 0 ]
+}
+
 open_file_in_pager() {
   local file pager_cmd
   file="$1"
@@ -3762,7 +3791,20 @@ EOF
       info "excluded $excluded_count Humanize Flow artifact path(s); rerun with --with-doc to include planning/review docs. List saved: $excluded_paths_file"
     fi
   fi
-  [ "$selected_count" -gt 0 ] || die "Codex did not select any files to commit. Selection kept at $stage_paths_file"
+  if [ "$selected_count" -eq 0 ]; then
+    if collect_excluded_commit_remainder "$with_doc" "$excluded_paths_file"; then
+      if [ "$with_doc" -eq 1 ]; then
+        success "No commit created: all commit-eligible changes are already committed; only local Humanize Flow runtime artifacts remain."
+      else
+        success "No commit created: all commit-eligible changes are already committed; remaining changes are Humanize Flow artifacts excluded by default."
+        info "run humanize-flow commit --with-doc to include planning/review docs intentionally."
+      fi
+      info "excluded remaining artifact path(s): $excluded_paths_file"
+      info "Codex selection kept at $stage_paths_file"
+      return 0
+    fi
+    die "Codex did not select any files to commit. Selection kept at $stage_paths_file"
+  fi
   info "selected $selected_count path(s) for commit; selection saved: $commit_paths_file"
   prompt_file="$run_dir/codex-commit-prompt.md"
   message_file="$run_dir/commit-message.txt"
