@@ -416,6 +416,7 @@ humanize-flow status --explain
 | `HUMANIZE_FLOW_REVIEW_SANDBOX` | 覆盖 review/review-feedback 使用的 Codex sandbox。 |
 | `HUMANIZE_FLOW_LANGUAGE` | 对单次命令覆盖生成产物语言。 |
 | `HUMANIZE_FLOW_CODEX_ARGS` | 传给 `codex exec` 的额外参数。 |
+| `HUMANIZE_FLOW_PYTHON` | 覆盖 CLI 内部 helper 使用的 Python 3 解释器。 |
 | `HUMANIZE_FLOW_BIN_DIR` | CLI 安装位置。 |
 | `CODEX_SKILLS_DIR` | 覆盖 Codex 用户级 skill 路径。 |
 | `CLAUDE_CONFIG_DIR` | 覆盖 Claude Code 配置根目录。 |

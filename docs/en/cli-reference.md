@@ -416,6 +416,7 @@ The default view summarizes the repository state, latest Humanize Flow run/revie
 | `HUMANIZE_FLOW_REVIEW_SANDBOX` | Override Codex sandbox for review/review-feedback runs. |
 | `HUMANIZE_FLOW_LANGUAGE` | Override generated artifact language for one command. |
 | `HUMANIZE_FLOW_CODEX_ARGS` | Extra arguments for `codex exec`. |
+| `HUMANIZE_FLOW_PYTHON` | Override the Python 3 interpreter used by internal CLI helpers. |
 | `HUMANIZE_FLOW_BIN_DIR` | Install location for the CLI. |
 | `CODEX_SKILLS_DIR` | Override Codex user skill path. |
 | `CLAUDE_CONFIG_DIR` | Override Claude Code config root. |

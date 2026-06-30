@@ -2,6 +2,12 @@
 
 All notable changes to humanize-flow will be documented in this file.
 
+## [0.5.11] - 2026-06-30
+
+### Fixed
+
+- Let the CLI choose any usable Python 3 interpreter, or `HUMANIZE_FLOW_PYTHON`, so pyenv shims pinned to a missing version do not break internal helpers.
+
 ## [0.5.10] - 2026-06-16
 
 ### Changed
@@ -14,6 +20,7 @@ All notable changes to humanize-flow will be documented in this file.
 ### Fixed
 
 - Normalize common Codex wrapper output before parsing `review` and `review-feedback` verdicts, while preserving the raw Codex stream under `.humanize-flow/runs/` for diagnosis.
+- Parse wrapped review verdict lines such as `Verdict: Humanize-Flow-Verdict: pass` so YOLO review does not retry after a valid pass report.
 - Mark the Beads Epic itself `in_progress` when an Epic-scoped `humanize-flow run ... --yolo` starts, so dashboards show active Epic work while child tasks run.
 
 ## [0.5.9] - 2026-05-16

@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-HF_VERSION="0.5.10"
+HF_VERSION="0.5.11"
 HF_NAME="humanize-flow"
 HF_DEFAULT_CLAUDE_MODEL="claude-sonnet-4-6"
 HF_DEFAULT_CLAUDE_PERMISSION_MODE="bypassPermissions"
@@ -131,6 +131,7 @@ Environment:
   HUMANIZE_FLOW_REVIEW_YOLO    Override Codex yolo mode for review/review-feedback runs.
   HUMANIZE_FLOW_LANGUAGE       Override artifact language for one command.
   HUMANIZE_FLOW_CODEX_ARGS     Extra Codex exec args. Default: empty.
+  HUMANIZE_FLOW_PYTHON         Override Python 3 interpreter for internal helpers.
   HUMANIZE_FLOW_NONINTERACTIVE Set to 1 to avoid interactive prompts in scripts.
 
 Examples:
@@ -182,6 +183,71 @@ docs_dir() { printf '%s/docs/humanize-flow\n' "$(repo_root)"; }
 handoff_path() { printf '%s/handoffs/%s.json\n' "$(state_dir)" "$1"; }
 user_config_path() { printf '%s/humanize-flow/config.json\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
 
+HF_PYTHON3_BIN=""
+HF_PYTHON3_ERROR=""
+
+python3_candidate_usable() {
+  local candidate
+  candidate="$1"
+  [ -n "$candidate" ] || return 1
+  "$candidate" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info.major == 3 else 1)
+PY
+}
+
+find_python3_bin() {
+  local candidate command_candidate
+  HF_PYTHON3_ERROR=""
+  if [ -n "$HF_PYTHON3_BIN" ]; then
+    printf '%s\n' "$HF_PYTHON3_BIN"
+    return 0
+  fi
+  if [ -n "${HUMANIZE_FLOW_PYTHON:-}" ]; then
+    if python3_candidate_usable "$HUMANIZE_FLOW_PYTHON"; then
+      HF_PYTHON3_BIN="$HUMANIZE_FLOW_PYTHON"
+      printf '%s\n' "$HF_PYTHON3_BIN"
+      return 0
+    fi
+    HF_PYTHON3_ERROR="HUMANIZE_FLOW_PYTHON does not point to a usable Python 3 interpreter: $HUMANIZE_FLOW_PYTHON"
+    return 1
+  fi
+
+  for command_candidate in python3 python; do
+    candidate="$(command -v "$command_candidate" 2>/dev/null || true)"
+    if python3_candidate_usable "$candidate"; then
+      HF_PYTHON3_BIN="$candidate"
+      printf '%s\n' "$HF_PYTHON3_BIN"
+      return 0
+    fi
+  done
+
+  for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 "$HOME"/.pyenv/versions/*/bin/python3 "$HOME"/.pyenv/versions/*/bin/python3.[0-9]; do
+    case "$candidate" in *'*'*) continue ;; esac
+    if python3_candidate_usable "$candidate"; then
+      HF_PYTHON3_BIN="$candidate"
+      printf '%s\n' "$HF_PYTHON3_BIN"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+python3_bin() {
+  find_python3_bin && return 0
+  if [ -n "$HF_PYTHON3_ERROR" ]; then
+    die "$HF_PYTHON3_ERROR"
+  fi
+  die "Python 3 is required. Install Python 3 or set HUMANIZE_FLOW_PYTHON=/path/to/python3."
+}
+
+run_python3() {
+  local bin
+  bin="$(python3_bin)"
+  "$bin" "$@"
+}
+
 repo_relative_path() {
   local path root
   path="$1"
@@ -193,7 +259,7 @@ repo_relative_path() {
 }
 
 slugify() {
-  python3 - "$@" <<'PY'
+  run_python3 - "$@" <<'PY'
 import re, sys
 text = " ".join(sys.argv[1:]).strip().lower()
 text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
@@ -208,7 +274,7 @@ reviewer_skill_hint() { printf '%s\n' '$humanize-flow-reviewer'; }
 json_get() {
   local file key default
   file="$1"; key="$2"; default="$3"
-  python3 - "$file" "$key" "$default" <<'PY'
+  run_python3 - "$file" "$key" "$default" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -239,7 +305,7 @@ json_set() {
   local file key value
   file="$1"; key="$2"; value="$3"
   mkdir -p "$(dirname "$file")"
-  python3 - "$file" "$key" "$value" <<'PY'
+  run_python3 - "$file" "$key" "$value" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -482,7 +548,7 @@ load_claude_env_file() {
   [ -n "$env_file" ] || return 0
   env_file="$(resolve_repo_path "$env_file")"
   [ -f "$env_file" ] || die "Claude env file not found: $env_file"
-  env_entries="$(python3 - "$env_file" <<'PY'
+  env_entries="$(run_python3 - "$env_file" <<'PY'
 import re
 import shlex
 import sys
@@ -590,7 +656,7 @@ run_codex_worker_exec() {
 }
 
 format_claude_stream_json() {
-  python3 -c "$(cat <<'PY'
+  run_python3 -c "$(cat <<'PY'
 import json
 import sys
 
@@ -962,6 +1028,7 @@ state_dir: $(state_dir)
 docs_dir: $(docs_dir)
 user_config: $(user_config_path)
 language: $(language_default)
+python3: $(python3_bin)
 claude.model: $(claude_model_default)
 claude.permission_mode: $(claude_permission_mode_default)
 claude.humanize: $(claude_humanize_default)
@@ -981,10 +1048,15 @@ EOF
 }
 
 cmd_doctor() {
-  local failures=0
+  local failures=0 resolved_python
   info "version: $HF_VERSION"
   info "dist root: $DIST_ROOT"
   info "language: $(language_default)"
+  if resolved_python="$(find_python3_bin)"; then
+    info "python3: $resolved_python"
+  else
+    info "python3: not found"
+  fi
   info "claude model: $(claude_model_default)"
   info "claude permission mode: $(claude_permission_mode_default)"
   info "claude humanize: $(claude_humanize_default)"
@@ -1000,7 +1072,9 @@ cmd_doctor() {
   info "review sandbox: $(review_sandbox_default)"
 
   for bin in git python3 gh codex claude bd jq; do
-    if command_exists "$bin"; then
+    if [ "$bin" = "python3" ] && [ -n "$resolved_python" ]; then
+      doctor_line ok "$(printf '%-10s %s' "$bin" "$resolved_python")"
+    elif command_exists "$bin"; then
       doctor_line ok "$(printf '%-10s %s' "$bin" "$(command -v "$bin")")"
     else
       case "$bin" in
@@ -1218,7 +1292,7 @@ EOF
 }
 
 extract_bd_slug_seed() {
-  python3 - "$1" "$2" <<'PY'
+  run_python3 - "$1" "$2" <<'PY'
 import json, re, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -1360,7 +1434,7 @@ cmd_approve() {
   done
   file="$(handoff_path "$slug")"
   [ -f "$file" ] || die "handoff not found: $file"
-  python3 - "$file" <<'PY'
+  run_python3 - "$file" <<'PY'
 import json, sys, datetime, getpass
 path = sys.argv[1]
 with open(path, encoding='utf-8') as f:
@@ -1389,7 +1463,7 @@ cmd_materialize_bd() {
   [ -f "$file" ] || die "handoff not found: $file"
   command_exists bd || die "bd CLI not found. Install Beads or run without --materialize-bd."
   lang="$(language_default)"
-  HUMANIZE_FLOW_LANGUAGE_EFFECTIVE="$lang" python3 - "$file" <<'PY'
+  HUMANIZE_FLOW_LANGUAGE_EFFECTIVE="$lang" run_python3 - "$file" <<'PY'
 import json, os, subprocess, sys, datetime, shlex
 from pathlib import Path
 
@@ -1531,7 +1605,7 @@ PY
 find_slug_for_bd_id() {
   local bd_id
   bd_id="$1"
-  python3 - "$(state_dir)/handoffs" "$bd_id" <<'PY'
+  run_python3 - "$(state_dir)/handoffs" "$bd_id" <<'PY'
 import json, sys
 from pathlib import Path
 root = Path(sys.argv[1]); target = sys.argv[2]
@@ -1565,7 +1639,7 @@ PY
 find_handoff_for_ref() {
   local ref
   ref="$1"
-  python3 - "$(state_dir)/handoffs" "$ref" <<'PY'
+  run_python3 - "$(state_dir)/handoffs" "$ref" <<'PY'
 import json, sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -1612,7 +1686,7 @@ PY
 default_bd_id_for_slug() {
   local slug
   slug="$1"
-  python3 - "$(handoff_path "$slug")" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -1644,7 +1718,7 @@ PY
 epic_bd_id_for_slug() {
   local slug
   slug="$1"
-  python3 - "$(handoff_path "$slug")" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1684,7 +1758,7 @@ EOF
     return
   fi
   file="$(handoff_path "$slug")"
-  python3 - "$file" "$ref" "$slug" "$bd_id" <<'PY'
+  run_python3 - "$file" "$ref" "$slug" "$bd_id" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1722,7 +1796,7 @@ PY
 yolo_target_ids_for_ref() {
   local ref slug
   ref="$1"; slug="$2"
-  python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1767,7 +1841,7 @@ PY
 handoff_child_task_ids() {
   local slug
   slug="$1"
-  python3 - "$(handoff_path "$slug")" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1787,7 +1861,7 @@ yolo_completed_child_task_ids() {
   local slug
   slug="$1"
   command_exists bd || die "YOLO Epic mode requires bd CLI so it can query child task status."
-  python3 - "$(handoff_path "$slug")" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" <<'PY'
 import json
 import subprocess
 import sys
@@ -1839,7 +1913,7 @@ yolo_in_progress_child_task_ids() {
   local slug completed_csv
   slug="$1"; completed_csv="${2:-}"
   command_exists bd || die "YOLO Epic mode requires bd CLI so it can query child task status."
-  python3 - "$(handoff_path "$slug")" "$completed_csv" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" "$completed_csv" <<'PY'
 import json
 import subprocess
 import sys
@@ -1893,7 +1967,7 @@ PY
 yolo_ref_is_epic_scope() {
   local ref slug
   ref="$1"; slug="$2"
-  python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" "$ref" "$slug" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1920,7 +1994,7 @@ yolo_ready_child_task_ids() {
   tmp="$(state_dir)/tmp/bd-ready-yolo-$(timestamp).json"
   mkdir -p "$(dirname "$tmp")"
   bd ready --json > "$tmp"
-  python3 - "$(handoff_path "$slug")" "$tmp" "$completed_csv" <<'PY'
+  run_python3 - "$(handoff_path "$slug")" "$tmp" "$completed_csv" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -2004,7 +2078,7 @@ latest_review_for_slug() {
   slug="$1"; ref="${2:-}"
   review_dir="$(docs_dir)/$slug/reviews"
   [ -d "$review_dir" ] || return 1
-  python3 - "$review_dir" "$ref" <<'PY'
+  run_python3 - "$review_dir" "$ref" <<'PY'
 import sys
 from pathlib import Path
 import re
@@ -2042,7 +2116,7 @@ review_verdict() {
   local review_file
   review_file="$1"
   [ -f "$review_file" ] || return 1
-  python3 - "$review_file" <<'PY'
+  run_python3 - "$review_file" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -2059,6 +2133,11 @@ for pattern in patterns:
     if match:
         print(match.group(1).lower())
         raise SystemExit(0)
+embedded = re.findall(r'(?i)Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\b', text)
+unique = sorted({item.lower() for item in embedded})
+if len(unique) == 1:
+    print(unique[0])
+    raise SystemExit(0)
 raise SystemExit(1)
 PY
 }
@@ -2067,7 +2146,7 @@ normalize_review_output() {
   local raw_file output_file
   raw_file="$1"; output_file="$2"
   [ -f "$raw_file" ] || return 1
-  python3 - "$raw_file" "$output_file" <<'PY'
+  run_python3 - "$raw_file" "$output_file" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -2157,7 +2236,7 @@ ensure_approved_handoff_for_slug() {
   slug="$1"
   file="$(handoff_path "$slug")"
   [ -f "$file" ] || die "handoff not found for yolo run: $file"
-  python3 - "$file" <<'PY'
+  run_python3 - "$file" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -2177,7 +2256,7 @@ set_handoff_artifact() {
   slug="$1"; key="$2"; value="$3"
   file="$(handoff_path "$slug")"
   [ -f "$file" ] || return 0
-  python3 - "$file" "$key" "$value" <<'PY'
+  run_python3 - "$file" "$key" "$value" <<'PY'
 import json, sys, datetime
 from pathlib import Path
 
@@ -2198,7 +2277,7 @@ PY
 verification_artifact_for_review() {
   local review_file
   review_file="$1"
-  python3 - "$review_file" "$(repo_root)" "$(state_dir)" <<'PY'
+  run_python3 - "$review_file" "$(repo_root)" "$(state_dir)" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -2220,7 +2299,7 @@ PY
 verification_artifact_for_ref() {
   local ref bd_id slug stamp
   ref="$1"; bd_id="${2:-}"; slug="${3:-}"; stamp="$(timestamp)"
-  python3 - "$ref" "$bd_id" "$slug" "$(state_dir)" "$stamp" <<'PY'
+  run_python3 - "$ref" "$bd_id" "$slug" "$(state_dir)" "$stamp" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -2831,7 +2910,7 @@ cmd_run_next() {
   tmp="$(state_dir)/tmp/bd-ready-$(timestamp).json"
   mkdir -p "$(dirname "$tmp")"
   bd ready --json > "$tmp"
-  bd_id="$(python3 - "$tmp" "$(state_dir)/handoffs" "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" <<'PY'
+  bd_id="$(run_python3 - "$tmp" "$(state_dir)/handoffs" "${HUMANIZE_FLOW_NONINTERACTIVE:-0}" <<'PY'
 import json, sys
 from pathlib import Path
 ready_path = Path(sys.argv[1])
@@ -3200,7 +3279,7 @@ EOF
     info "opening editor for human feedback: $editor"
     # shellcheck disable=SC2086
     $editor "$feedback_file" || die "editor exited unsuccessfully"
-    python3 - "$feedback_file" <<'PY'
+    run_python3 - "$feedback_file" <<'PY'
 import sys
 from pathlib import Path
 
@@ -3341,7 +3420,7 @@ EOF
     verification_file="$(verification_artifact_for_ref "$ref" "$bd_id" "${slug:-}")"
   fi
   mkdir -p "$(dirname "$verification_file")"
-  python3 - "$verification_file" "$ref" "$bd_id" "${slug:-}" "$review_file" "$verdict" "$note" <<'PY'
+  run_python3 - "$verification_file" "$ref" "$bd_id" "${slug:-}" "$review_file" "$verdict" "$note" <<'PY'
 import getpass
 import json
 import sys
@@ -3517,7 +3596,7 @@ EOF
   sed -i.bak '/^```/d' "$task_file"
   rm -f "$task_file.bak"
 
-  python3 - "$task_file" "$log_file" "$output_file" <<'PY'
+  run_python3 - "$task_file" "$log_file" "$output_file" <<'PY'
 import json, re, subprocess, sys
 from pathlib import Path
 
@@ -3936,7 +4015,7 @@ repo_arg_from_remote() {
   local remote url repo
   remote="$1"
   url="$(git remote get-url "$remote")"
-  repo="$(python3 - "$url" <<'PY'
+  repo="$(run_python3 - "$url" <<'PY'
 import re
 import sys
 from urllib.parse import unquote, urlparse
@@ -3980,7 +4059,7 @@ PY
 collect_pr_human_verification_guides() {
   local output_file
   output_file="$1"
-  python3 - "$(repo_root)" "$output_file" <<'PY'
+  run_python3 - "$(repo_root)" "$output_file" <<'PY'
 import json
 import re
 import sys
@@ -4051,7 +4130,7 @@ append_pr_human_verification_guide_if_missing() {
   guides_file="$2"
   lang="$(language_default)"
   [ -s "$guides_file" ] || return 0
-  python3 - "$body_file" "$guides_file" "$lang" <<'PY'
+  run_python3 - "$body_file" "$guides_file" "$lang" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -4807,7 +4886,7 @@ EOF
   run_codex_exec "$prompt_text" > "$draft_file"
   sed -i.bak '/^```/d' "$draft_file"
   rm -f "$draft_file.bak"
-  python3 - "$draft_file" "$title_file" "$body_file" <<'PY'
+  run_python3 - "$draft_file" "$title_file" "$body_file" <<'PY'
 import json, re, sys
 from pathlib import Path
 
@@ -4896,7 +4975,7 @@ status_snapshot_json() {
     mkdir -p "$(dirname "$ready_file")"
     bd ready --json > "$ready_file" 2>/dev/null || ready_file=""
   fi
-  python3 - "$(repo_root)" "$(state_dir)" "$(docs_dir)" "$limit" "$ready_file" "$HF_VERSION" <<'PY'
+  run_python3 - "$(repo_root)" "$(state_dir)" "$(docs_dir)" "$limit" "$ready_file" "$HF_VERSION" <<'PY'
 import json
 import os
 import re
@@ -4919,6 +4998,9 @@ def rel(path):
         return str(Path(path).resolve().relative_to(repo.resolve()))
     except Exception:
         return str(path)
+
+def strip_suffix(text, suffix):
+    return text[:-len(suffix)] if suffix and text.endswith(suffix) else text
 
 def read_json(path):
     try:
@@ -4979,6 +5061,10 @@ def review_verdict(path):
         match = pattern.search(text)
         if match:
             return match.group(1).lower()
+    embedded = re.findall(r'Humanize-Flow-Verdict\s*:\s*`?(pass|changes_requested|blocked)`?\b', text, re.I)
+    unique = sorted({item.lower() for item in embedded})
+    if len(unique) == 1:
+        return unique[0]
     return ''
 
 def path_mtime(path):
@@ -5225,7 +5311,7 @@ if latest_review:
     if latest_review['verdict'] == 'pass':
         verification_path = None
         review_refs = {latest_review.get('slug') or ''}
-        ref = latest_review['name'].removesuffix('.md').split('-', 2)[-1]
+        ref = strip_suffix(latest_review['name'], '.md').split('-', 2)[-1]
         review_refs.add(ref)
         slug_for_review = latest_review.get('slug') or ''
         if slug_for_review:
@@ -5251,7 +5337,7 @@ if latest_review:
         else:
             next_actions.append(f'Delivery gate: complete the Human verification guide, then run humanize-flow verify {ref}.')
     elif latest_review['verdict'] in {'changes_requested', 'blocked'}:
-        ref = latest_review['name'].removesuffix('.md').split('-', 2)[-1]
+        ref = strip_suffix(latest_review['name'], '.md').split('-', 2)[-1]
         next_actions.append(f"Run humanize-flow run {ref} --yolo after reviewing {latest_review['path']}.")
 if ready:
     first_ready = ready[0]
@@ -5301,7 +5387,7 @@ PY
 status_render_text() {
   local snapshot_file
   snapshot_file="$1"
-  python3 - "$snapshot_file" <<'PY'
+  run_python3 - "$snapshot_file" <<'PY'
 import json
 import sys
 

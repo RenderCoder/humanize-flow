@@ -11,6 +11,8 @@ export XDG_CONFIG_HOME="$TMP/config"
 bin/humanize-flow version >/dev/null
 bin/humanize-flow help >/dev/null
 bin/humanize-flow paths >/dev/null
+test "$(HUMANIZE_FLOW_PYTHON="$(command -v python3)" bin/humanize-flow paths | awk -F': ' '/^python3:/ {print $2}')" = "$(command -v python3)"
+PYENV_VERSION=humanize-flow-missing-python bin/humanize-flow paths | grep -q '^python3: /'
 test "$(bin/humanize-flow i18n)" = "en"
 test "$(HUMANIZE_FLOW_LANGUAGE=zh bin/humanize-flow i18n)" = "zh"
 bin/humanize-flow config show | grep -q 'codex.model: (codex default)'
@@ -269,7 +271,7 @@ case "$*" in
         printf 'hook: Stop Completed\n'
         printf '已完成 Humanize Flow 审查并写入：\n\n'
         printf '[review.md](docs/humanize-flow/imported-task/reviews/review.md)\n\n'
-        printf '结论：`Humanize-Flow-Verdict: pass`\n\n'
+        printf 'Verdict：`Humanize-Flow-Verdict: pass`\n\n'
         printf '# Humanize Flow Review\n\n## Verdict\n\n`pass`\n\n## Summary\n\nfake review\n\n## Human verification guide\n\n- [ ] Run smoke checks.\n'
         exit 0
       fi
